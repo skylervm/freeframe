@@ -184,18 +184,20 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     function handleKeyDown(e: KeyboardEvent) {
       if (searchParams.get('compare')) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'ArrowLeft' && prevAsset) {
+      // Video/audio players handle arrow keys for frame-stepping — don't navigate away
+      const playerOwnsArrows = asset && (asset.asset_type === 'video' || asset.asset_type === 'audio')
+      if (e.key === 'ArrowLeft' && prevAsset && !playerOwnsArrows) {
         e.preventDefault()
         navigateAsset(prevAsset.id)
       }
-      if (e.key === 'ArrowRight' && nextAsset) {
+      if (e.key === 'ArrowRight' && nextAsset && !playerOwnsArrows) {
         e.preventDefault()
         navigateAsset(nextAsset.id)
       }
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [prevAsset, nextAsset, searchParams])
+  }, [asset, prevAsset, nextAsset, searchParams])
 
   if (isLoading || !asset) {
     return (
