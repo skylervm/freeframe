@@ -27,7 +27,7 @@ def _committed_media_sum(db: Session):
             Asset.deleted_at.is_(None),
             AssetVersion.deleted_at.is_(None),
             AssetVersion.processing_status.in_(
-                [ProcessingStatus.processing, ProcessingStatus.ready]
+                [ProcessingStatus.queued, ProcessingStatus.processing, ProcessingStatus.ready]
             ),
         )
 

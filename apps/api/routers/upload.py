@@ -2,13 +2,14 @@ import logging
 import os
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
 from datetime import datetime, timezone
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
-from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, ProcessingStatus, FileType
+from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, ProcessingOutbox, ProcessingStatus, FileType
 from ..models.folder import Folder
 from ..models.project import Project
 from ..services.s3_service import (
@@ -31,11 +32,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-@router.post("/initiate", response_model=InitiateUploadResponse)
-def initiate_upload(
+def _initiate_upload(
     body: InitiateUploadRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session,
+    current_user: User,
+    *,
+    automation_token_id: uuid.UUID | None = None,
+    client_request_id: str | None = None,
+    automation_request_fingerprint: str | None = None,
 ):
     # Validate mime type
     if body.mime_type not in ALLOWED_MIME_TYPES:
@@ -95,6 +99,9 @@ def initiate_upload(
         version_number=next_version_number,
         processing_status=ProcessingStatus.uploading,
         created_by=current_user.id,
+        automation_token_id=automation_token_id,
+        client_request_id=client_request_id,
+        automation_request_fingerprint=automation_request_fingerprint,
     )
     db.add(version)
     db.flush()
@@ -132,6 +139,15 @@ def initiate_upload(
     )
 
 
+@router.post("/initiate", response_model=InitiateUploadResponse)
+def initiate_upload(
+    body: InitiateUploadRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _initiate_upload(body, db, current_user)
+
+
 @router.post("/presign-part", response_model=PresignPartResponse)
 def presign_part(
     body: PresignPartRequest,
@@ -145,7 +161,7 @@ def presign_part(
     media_file = db.query(MediaFile).filter(MediaFile.s3_key_raw == body.s3_key).first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Upload not found")
-    version = db.query(AssetVersion).filter(
+    version = db.query(AssetVersion).populate_existing().with_for_update().filter(
         AssetVersion.id == media_file.version_id,
         # A version the reaper has already soft-deleted must not keep accepting
         # parts: those bytes would be written to a key nothing owns, and no later
@@ -261,7 +277,7 @@ def complete_upload(
     current_user: User = Depends(get_current_user),
 ):
     # Validate DB first
-    version = db.query(AssetVersion).filter(
+    version = db.query(AssetVersion).populate_existing().with_for_update().filter(
         AssetVersion.id == body.version_id,
         AssetVersion.deleted_at.is_(None),
     ).first()
@@ -269,6 +285,14 @@ def complete_upload(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
+    if body.asset_id != version.asset_id:
+        raise HTTPException(status_code=400, detail="Asset does not match this version")
+    if (
+        version.processing_status == ProcessingStatus.uploading
+        and isinstance(version.upload_id, str)
+        and version.upload_id != body.upload_id
+    ):
+        raise HTTPException(status_code=403, detail="Upload does not match this version")
 
     # Match the key against this version rather than taking the request's word for
     # it: ownership was proved for the version, never for whatever key the body
@@ -280,13 +304,18 @@ def complete_upload(
     ).first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Upload not found for this version")
-
     # Only an upload that is still uploading can be completed. Without this, a
     # replay of this request against an already-finished version rewinds it to
     # `processing` and queues a second transcode -- and because `/upload/*` is
     # exempt from the global rate limiter, a loop over it would park the whole
     # transcoding queue on re-runs. The upload id is not a credential either: any
     # unrecognised value reads as "already gone", so replaying needs no secret.
+    if version.processing_status in (ProcessingStatus.queued, ProcessingStatus.processing, ProcessingStatus.ready):
+        return CompleteUploadResponse(
+            status=version.processing_status.value,
+            asset_id=version.asset_id,
+            version_id=version.id,
+        )
     if version.processing_status != ProcessingStatus.uploading:
         raise HTTPException(
             status_code=409,
@@ -296,12 +325,11 @@ def complete_upload(
     s3_key = media_file.s3_key_raw
 
     def _finish() -> CompleteUploadResponse:
-        version.processing_status = ProcessingStatus.processing
+        version.processing_status = ProcessingStatus.queued
+        db.add(ProcessingOutbox(version_id=version.id))
         db.commit()
-        background_tasks.add_task(_trigger_processing, body.asset_id, body.version_id)
-        return CompleteUploadResponse(
-            status="processing", asset_id=body.asset_id, version_id=body.version_id
-        )
+        background_tasks.add_task(_kick_processing_dispatch)
+        return CompleteUploadResponse(status="queued", asset_id=version.asset_id, version_id=version.id)
 
     try:
         stored = list_upload_parts(s3_key, body.upload_id)
@@ -326,6 +354,12 @@ def complete_upload(
         stored = None
 
     if stored is None:
+        if body.probe_only:
+            return CompleteUploadResponse(
+                status=ProcessingStatus.uploading.value,
+                asset_id=version.asset_id,
+                version_id=version.id,
+            )
         if not body.parts:
             raise HTTPException(status_code=400, detail="No parts were reported for this upload.")
         parts = [p.model_dump() for p in body.parts]
@@ -333,6 +367,12 @@ def complete_upload(
         try:
             parts = _parts_from_listing(stored, media_file.file_size_bytes)
         except ValueError as e:
+            if body.probe_only:
+                return CompleteUploadResponse(
+                    status=ProcessingStatus.uploading.value,
+                    asset_id=version.asset_id,
+                    version_id=version.id,
+                )
             # The user has just spent minutes or hours transferring this. Whatever we
             # tell them, the operator needs enough to correlate a support ticket:
             # rejecting after every byte moved is precisely the shape of failure that
@@ -359,11 +399,10 @@ def complete_upload(
     return _finish()
 
 
-def _trigger_processing(asset_id: uuid.UUID, version_id: uuid.UUID):
-    """Dispatch Celery task to process the uploaded asset."""
-    from ..tasks.transcode_tasks import process_asset
-    from ..tasks.celery_app import send_task_safe
-    send_task_safe(process_asset, str(asset_id), str(version_id))
+def _kick_processing_dispatch():
+    """Best-effort fast path; the periodic outbox dispatcher is the durable path."""
+    from ..tasks.transcode_tasks import dispatch_pending_processing
+    dispatch_pending_processing.delay()
 
 
 @router.post("/abort", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,7 +412,7 @@ def abort_upload(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    version = db.query(AssetVersion).filter(
+    version = db.query(AssetVersion).populate_existing().with_for_update().filter(
         AssetVersion.id == body.version_id,
         AssetVersion.deleted_at.is_(None),
     ).first()
@@ -381,6 +420,21 @@ def abort_upload(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
+
+    # A completion replay may call abort after the version is already processing.
+    # It cannot change that state, so avoid touching storage or requiring a media
+    # lookup for an operation with no remaining effect.
+    if version.processing_status != ProcessingStatus.uploading:
+        return
+    if isinstance(version.upload_id, str) and version.upload_id != body.upload_id:
+        raise HTTPException(status_code=403, detail="Upload does not match this version")
+
+    media_file = db.query(MediaFile).filter(
+        MediaFile.version_id == version.id,
+        MediaFile.s3_key_raw == body.s3_key,
+    ).first()
+    if not media_file:
+        raise HTTPException(status_code=404, detail="Upload not found for this version")
 
     # The status write must happen even if S3 refuses the abort. An upload the
     # reaper already took raises NoSuchUpload here, and letting that propagate
@@ -397,30 +451,21 @@ def abort_upload(
             raise
         logger.info("upload %s was already gone when aborted", version.id)
 
-    # Only an upload still in progress is resolved here. The client fires this from
-    # the catch of every completion failure, so a version that already reached
-    # `processing` must be left alone.
-    if version.processing_status == ProcessingStatus.uploading:
-        # Still `uploading` does not prove the upload failed. CompleteMultipartUpload
-        # can have succeeded with the process dying before the status was committed,
-        # which leaves a finished object and a version that still looks in-flight.
-        # Marking that failed hands it to the reaper, which deletes the finished file
-        # a day later -- so ask storage what actually happened before deciding.
-        media_file = db.query(MediaFile).filter(
-            MediaFile.version_id == version.id,
-            MediaFile.s3_key_raw == body.s3_key,
-        ).first()
-        assembled = media_file is not None and _already_assembled(
-            body.s3_key, media_file.file_size_bytes, version.id
+    # Still `uploading` does not prove the upload failed. CompleteMultipartUpload
+    # can have succeeded with the process dying before the status was committed,
+    # which leaves a finished object and a version that still looks in-flight.
+    # Marking that failed hands it to the reaper, which deletes the finished file
+    # a day later -- so ask storage what actually happened before deciding.
+    assembled = _already_assembled(body.s3_key, media_file.file_size_bytes, version.id)
+    if assembled:
+        logger.warning(
+            "abort called for upload %s but the object is already complete; "
+            "queueing it instead of marking it failed", version.id,
         )
-        if assembled:
-            logger.warning(
-                "abort called for upload %s but the object is already complete; "
-                "recording it as processing instead of failed", version.id,
-            )
-            version.processing_status = ProcessingStatus.processing
-            db.commit()
-            background_tasks.add_task(_trigger_processing, version.asset_id, version.id)
-            return
-        version.processing_status = ProcessingStatus.failed
+        version.processing_status = ProcessingStatus.queued
+        db.add(ProcessingOutbox(version_id=version.id))
         db.commit()
+        background_tasks.add_task(_kick_processing_dispatch)
+        return
+    version.processing_status = ProcessingStatus.failed
+    db.commit()

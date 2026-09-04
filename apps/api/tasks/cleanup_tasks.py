@@ -8,7 +8,7 @@ from .celery_app import celery_app
 from ..database import SessionLocal
 from ..config import settings
 from ..models.asset import (
-    Asset, AssetVersion, MediaFile, CarouselItem, ProcessingStatus,
+    Asset, AssetVersion, MediaFile, CarouselItem, ProcessingOutbox, ProcessingStatus,
 )
 from ..models.comment import Comment, Annotation, CommentAttachment, CommentReaction
 from ..models.approval import Approval
@@ -110,6 +110,7 @@ def _purge_version(db, version_id, counts: PurgeCounts) -> None:
     for c in db.query(Comment).filter(Comment.version_id == version_id).all():
         _purge_comment(db, c.id, counts)
     db.query(Approval).filter(Approval.version_id == version_id).delete(synchronize_session=False)
+    db.query(ProcessingOutbox).filter(ProcessingOutbox.version_id == version_id).delete(synchronize_session=False)
     db.query(AssetVersion).filter(AssetVersion.id == version_id).delete(synchronize_session=False)
     counts.versions += 1
     db.flush()
@@ -209,6 +210,8 @@ def _purge_project(db, project_id, counts: PurgeCounts) -> None:
             counts.s3_deletes += 1
         db.query(ProjectBranding).filter(ProjectBranding.project_id == project_id).delete(synchronize_session=False)
     db.query(WatermarkSettings).filter(WatermarkSettings.project_id == project_id).delete(synchronize_session=False)
+    from ..models.automation_token import ProjectAutomationToken
+    db.query(ProjectAutomationToken).filter(ProjectAutomationToken.project_id == project_id).delete(synchronize_session=False)
     db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete(synchronize_session=False)
     db.query(ActivityLog).filter(ActivityLog.project_id == project_id).delete(synchronize_session=False)
     if p.poster_s3_key:

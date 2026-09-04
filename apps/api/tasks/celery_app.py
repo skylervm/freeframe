@@ -52,6 +52,7 @@ celery_app.conf.update(
         "send_due_date_reminders": {"queue": "maintenance"},
         "cleanup_soft_deleted": {"queue": "maintenance"},
         "sweep_orphan_s3": {"queue": "maintenance"},
+        "dispatch_pending_processing": {"queue": "maintenance"},
         # Not housekeeping: this one is dispatched from a request handler and
         # is a full FFmpeg re-encode, so it belongs with the other transcoding
         # work rather than behind an hour-long bucket sweep.
@@ -79,6 +80,10 @@ celery_app.conf.beat_schedule = {
     "reap-stale-uploads": {
         "task": "reap_stale_uploads",
         "schedule": crontab(minute="0"),  # every hour
+    },
+    "dispatch-pending-processing": {
+        "task": "dispatch_pending_processing",
+        "schedule": crontab(minute="*"),
     },
     "cleanup-soft-deleted": {
         "task": "cleanup_soft_deleted",

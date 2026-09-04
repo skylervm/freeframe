@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uuid
 from ..models.asset import AssetType
 from ..config import settings
@@ -49,6 +49,7 @@ class InitiateUploadRequest(BaseModel):
     original_filename: str
     mime_type: str
     file_size_bytes: int
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     # For new version of existing asset
     asset_id: uuid.UUID | None = None
     folder_id: uuid.UUID | None = None
@@ -81,6 +82,7 @@ class CompleteUploadRequest(BaseModel):
     # the server reads them from storage, because a client-supplied list that
     # omits a part completes successfully and truncates the file.
     parts: list[UploadPart] = []
+    probe_only: bool = False
 
 class CompleteUploadResponse(BaseModel):
     status: str

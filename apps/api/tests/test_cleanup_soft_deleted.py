@@ -426,7 +426,8 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("assets", "project_id"), ("folders", "project_id"), ("share_links", "project_id"),
         ("project_brandings", "project_id"), ("watermark_settings", "project_id"),
         ("metadata_fields", "project_id"), ("collections", "project_id"),
-        ("project_members", "project_id"), ("activity_logs", "project_id"),
+            ("project_members", "project_id"), ("activity_logs", "project_id"),
+            ("project_automation_tokens", "project_id"),
         # -> folders.id
         ("assets", "folder_id"), ("share_links", "folder_id"), ("share_link_items", "folder_id"),
         ("asset_shares", "folder_id"), ("folders", "parent_id"),
@@ -435,7 +436,8 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("share_link_items", "asset_id"), ("asset_shares", "asset_id"), ("asset_metadata", "asset_id"),
         ("activity_logs", "asset_id"), ("notifications", "asset_id"), ("approvals", "asset_id"),
         # -> asset_versions.id
-        ("media_files", "version_id"), ("carousel_items", "version_id"),
+            ("media_files", "version_id"), ("carousel_items", "version_id"),
+            ("processing_outbox", "version_id"),
         ("comments", "version_id"), ("approvals", "version_id"),
         # -> media_files.id
         ("carousel_items", "media_file_id"),

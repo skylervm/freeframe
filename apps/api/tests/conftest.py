@@ -63,6 +63,8 @@ def _make_mock_db() -> MagicMock:
     """Return a fresh mock Session."""
     db = MagicMock()
     db.query.return_value = db
+    db.populate_existing.return_value = db
+    db.with_for_update.return_value = db
     db.filter.return_value = db
     db.first.return_value = None
     db.all.return_value = []

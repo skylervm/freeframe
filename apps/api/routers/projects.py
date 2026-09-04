@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import uuid
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.automation_token import ProjectAutomationToken
 from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
@@ -14,6 +17,7 @@ from ..tasks.celery_app import send_task_safe
 from ..services.s3_service import put_object, generate_presigned_get_url, delete_object
 from ..services.storage import project_storage_used_bytes
 from ..config import settings
+from ..schemas.automation_token import AutomationTokenCreate, AutomationTokenCreated, AutomationTokenResponse
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -37,6 +41,70 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> Pr
     if not member or member.role != ProjectRole.owner:
         raise HTTPException(status_code=403, detail="Project owner access required")
     return member
+
+
+@router.post("/{project_id}/automation-tokens", response_model=AutomationTokenCreated, status_code=status.HTTP_201_CREATED)
+def create_automation_token(
+    project_id: uuid.UUID,
+    body: AutomationTokenCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_project(db, project_id)
+    _require_project_owner(db, project_id, current_user)
+    if body.expires_at <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Token expiry must be in the future")
+    token_id = uuid.uuid4()
+    secret = secrets.token_urlsafe(32)
+    token = ProjectAutomationToken(
+        id=token_id,
+        project_id=project_id,
+        name=body.name,
+        secret_hash=hashlib.sha256(secret.encode()).hexdigest(),
+        created_by=current_user.id,
+        expires_at=body.expires_at,
+    )
+    db.add(token)
+    db.commit()
+    db.refresh(token)
+    return AutomationTokenCreated(
+        **AutomationTokenResponse.model_validate(token).model_dump(),
+        token=f"ffat_{token_id}_{secret}",
+    )
+
+
+@router.get("/{project_id}/automation-tokens", response_model=list[AutomationTokenResponse])
+def list_automation_tokens(
+    project_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_project(db, project_id)
+    _require_project_owner(db, project_id, current_user)
+    return db.query(ProjectAutomationToken).filter(
+        ProjectAutomationToken.project_id == project_id,
+        ProjectAutomationToken.deleted_at.is_(None),
+    ).order_by(ProjectAutomationToken.created_at.desc()).all()
+
+
+@router.delete("/{project_id}/automation-tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_automation_token(
+    project_id: uuid.UUID,
+    token_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _get_project(db, project_id)
+    _require_project_owner(db, project_id, current_user)
+    token = db.query(ProjectAutomationToken).filter(
+        ProjectAutomationToken.id == token_id,
+        ProjectAutomationToken.project_id == project_id,
+        ProjectAutomationToken.deleted_at.is_(None),
+    ).first()
+    if not token:
+        raise HTTPException(status_code=404, detail="Automation token not found")
+    token.revoked_at = datetime.now(timezone.utc)
+    db.commit()
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -96,7 +164,11 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         .filter(
             Asset.project_id.in_(all_project_ids), Asset.deleted_at.is_(None),
             AssetVersion.deleted_at.is_(None),
-            AssetVersion.processing_status.in_([ProcessingStatus.processing, ProcessingStatus.ready]),
+            AssetVersion.processing_status.in_([
+                ProcessingStatus.queued,
+                ProcessingStatus.processing,
+                ProcessingStatus.ready,
+            ]),
         )
         .group_by(Asset.project_id)
         .all()

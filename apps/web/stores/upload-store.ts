@@ -381,6 +381,7 @@ interface UploadStore {
 function mapProcessingStatus(status: string): UploadStatus {
   switch (status) {
     case 'uploading': return 'uploading'
+    case 'queued': return 'processing'
     case 'processing': return 'processing'
     case 'ready': return 'complete'
     case 'failed': return 'failed'

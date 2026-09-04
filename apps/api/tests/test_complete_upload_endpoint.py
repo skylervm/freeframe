@@ -11,7 +11,7 @@ import pytest
 from botocore.exceptions import ClientError
 
 import apps.api.routers.upload as upload_module
-from apps.api.models.asset import ProcessingStatus
+from apps.api.models.asset import ProcessingOutbox, ProcessingStatus
 
 MB = 1024 * 1024
 
@@ -25,11 +25,13 @@ def upload_rows(mock_db, test_user):
     """A version being uploaded plus its media file, wired into the mock session."""
     version = MagicMock()
     version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
 
     media_file = MagicMock()
     media_file.version_id = version.id
+    media_file.asset_id = version.asset_id
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
     media_file.file_size_bytes = 23 * MB
 
@@ -41,7 +43,7 @@ def _body(media_file, **overrides):
     body = {
         "s3_key": media_file.s3_key_raw,
         "upload_id": "upload-1",
-        "asset_id": str(uuid.uuid4()),
+        "asset_id": str(media_file.asset_id),
         "version_id": str(uuid.uuid4()),
         "parts": [{"PartNumber": 1, "ETag": '"client-said-so"'}],
     }
@@ -67,7 +69,7 @@ def _stub(monkeypatch, **kwargs):
     monkeypatch.setattr(
         upload_module, "head_object_size", kwargs.get("head", lambda k: None)
     )
-    monkeypatch.setattr(upload_module, "_trigger_processing", lambda a, v: None)
+    monkeypatch.setattr(upload_module, "_kick_processing_dispatch", lambda: None)
     return completed
 
 
@@ -122,10 +124,8 @@ def test_version_is_left_untouched_when_completion_is_refused(
 
 # ------------------------------------------------------------------ replay guard
 
-@pytest.mark.parametrize(
-    "status", [ProcessingStatus.processing, ProcessingStatus.ready, ProcessingStatus.failed]
-)
-def test_replaying_a_finished_upload_is_refused(
+@pytest.mark.parametrize("status", [ProcessingStatus.processing, ProcessingStatus.ready])
+def test_replaying_a_completed_upload_returns_its_existing_status(
     client, auth_headers, mock_db, test_user, monkeypatch, status
 ):
     """A replay must not rewind a finished version and queue a second transcode.
@@ -136,16 +136,18 @@ def test_replaying_a_finished_upload_is_refused(
     """
     version = MagicMock()
     version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = status
 
     media_file = MagicMock()
+    media_file.asset_id = version.asset_id
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
     media_file.file_size_bytes = 23 * MB
     mock_db.first.side_effect = [version, media_file]
 
     dispatched = []
-    monkeypatch.setattr(upload_module, "_trigger_processing", lambda a, v: dispatched.append(v))
+    monkeypatch.setattr(upload_module, "_kick_processing_dispatch", lambda: dispatched.append(version.id))
     monkeypatch.setattr(upload_module, "list_upload_parts",
                         lambda k, u: pytest.fail("storage must not be touched"))
 
@@ -153,9 +155,25 @@ def test_replaying_a_finished_upload_is_refused(
         "/upload/complete", json=_body(media_file, upload_id="junk"), headers=auth_headers
     )
 
-    assert resp.status_code == 409
+    assert resp.status_code == 200
+    assert resp.json()["status"] == status.value
     assert version.processing_status == status
     assert dispatched == []
+
+
+def test_replaying_a_failed_upload_is_refused(client, auth_headers, mock_db, test_user, monkeypatch):
+    version = MagicMock()
+    version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
+    version.created_by = test_user.id
+    version.processing_status = ProcessingStatus.failed
+    media_file = MagicMock(asset_id=version.asset_id, s3_key_raw="raw/p/a/v/original.mp4", file_size_bytes=23 * MB)
+    mock_db.first.side_effect = [version, media_file]
+    monkeypatch.setattr(upload_module, "list_upload_parts", lambda k, u: pytest.fail("storage must not be touched"))
+
+    resp = client.post("/upload/complete", json=_body(media_file), headers=auth_headers)
+
+    assert resp.status_code == 409
 
 
 # ------------------------------------------------------------------ idempotency
@@ -178,7 +196,8 @@ def test_retry_after_a_lost_response_succeeds_instead_of_failing(
     resp = client.post("/upload/complete", json=_body(media_file), headers=auth_headers)
 
     assert resp.status_code == 200
-    assert version.processing_status == ProcessingStatus.processing
+    assert version.processing_status == ProcessingStatus.queued
+    assert any(isinstance(call.args[0], ProcessingOutbox) for call in mock_db.add.call_args_list)
 
 
 def test_a_reaped_upload_is_reported_rather_than_treated_as_done(
@@ -253,10 +272,34 @@ def test_an_unsupported_backend_with_no_client_parts_is_an_error(
 
 # ------------------------------------------------------------------ key binding
 
+def test_a_mismatched_asset_is_rejected_before_storage_is_touched(
+    client, auth_headers, mock_db, test_user, monkeypatch
+):
+    version = MagicMock()
+    version.asset_id = uuid.uuid4()
+    version.created_by = test_user.id
+    version.processing_status = ProcessingStatus.uploading
+    mock_db.first.return_value = version
+    monkeypatch.setattr(upload_module, "list_upload_parts", lambda k, u: pytest.fail("storage must not be touched"))
+
+    resp = client.post(
+        "/upload/complete",
+        json={
+            "s3_key": "raw/p/a/v/original.mp4",
+            "upload_id": "u",
+            "asset_id": str(uuid.uuid4()),
+            "version_id": str(uuid.uuid4()),
+            "parts": [],
+        },
+        headers=auth_headers,
+    )
+    assert resp.status_code == 400
+
 def test_a_key_that_does_not_belong_to_the_version_is_rejected(
     client, auth_headers, mock_db, test_user, monkeypatch
 ):
     version = MagicMock()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
     # The MediaFile lookup filters on version_id AND s3_key_raw, so a foreign key misses.
@@ -269,7 +312,7 @@ def test_a_key_that_does_not_belong_to_the_version_is_rejected(
         json={
             "s3_key": "raw/someone/else/original.mp4",
             "upload_id": "u",
-            "asset_id": str(uuid.uuid4()),
+            "asset_id": str(version.asset_id),
             "version_id": str(uuid.uuid4()),
             "parts": [],
         },
@@ -285,9 +328,11 @@ def test_abort_marks_the_version_failed_when_the_upload_was_already_gone(
 ):
     version = MagicMock()
     version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
     media_file = MagicMock()
+    media_file.asset_id = version.asset_id
     media_file.s3_key_raw = "raw/k"
     media_file.file_size_bytes = 23 * MB
     # Second lookup: abort now asks whether the object actually got assembled before
@@ -320,9 +365,12 @@ def test_abort_does_not_fail_a_version_that_already_finished(
     """
     version = MagicMock()
     version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.ready
-    mock_db.first.side_effect = [version]
+    media_file = MagicMock()
+    media_file.s3_key_raw = "raw/k"
+    mock_db.first.side_effect = [version, media_file]
     monkeypatch.setattr(upload_module, "abort_multipart_upload", lambda k, u: None)
 
     resp = client.post(
@@ -341,9 +389,12 @@ def test_abort_surfaces_a_real_storage_failure(
     """Swallowing this would leave parts in the bucket and tell nobody."""
     version = MagicMock()
     version.id = uuid.uuid4()
+    version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
-    mock_db.first.side_effect = [version]
+    media_file = MagicMock()
+    media_file.s3_key_raw = "raw/k"
+    mock_db.first.side_effect = [version, media_file]
 
     def denied(k, u):
         raise _client_error("AccessDenied", "AbortMultipartUpload")

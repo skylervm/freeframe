@@ -47,6 +47,16 @@ describe('VersionSwitcher trigger status indicator (#118)', () => {
     expect(screen.getByTestId('version-status-indicator')).toHaveTextContent(/uploading/i)
   })
 
+  it('shows a queued indicator while the newest version is waiting for a worker', () => {
+    const v1 = makeVersion({ version_number: 1, processing_status: 'ready' })
+    const v2 = makeVersion({ version_number: 2, processing_status: 'queued' })
+    useReviewStore.getState().setCurrentVersion(v1)
+
+    render(<VersionSwitcher versions={[v1, v2]} />)
+
+    expect(screen.getByTestId('version-status-indicator')).toHaveTextContent(/queued/i)
+  })
+
   it('shows no processing indicator when every version is ready', () => {
     const v1 = makeVersion({ version_number: 1, processing_status: 'ready' })
     const v2 = makeVersion({ version_number: 2, processing_status: 'ready' })

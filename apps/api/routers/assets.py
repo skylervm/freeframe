@@ -27,7 +27,8 @@ router = APIRouter(tags=["assets"])
 # A version in one of these is not something a viewer can open: it is an upload in
 # flight or one that died. It is still the newest version by number, which is why
 # "latest" and "the one to show" are not the same question.
-_UNVIEWABLE_STATUSES = (ProcessingStatus.uploading, ProcessingStatus.failed)
+_UNVIEWABLE_STATUSES = (ProcessingStatus.uploading, ProcessingStatus.queued, ProcessingStatus.failed)
+_UNDISPLAYABLE_STATUSES = (ProcessingStatus.uploading, ProcessingStatus.failed)
 
 
 def _pick_version(db: Session, asset_id: uuid.UUID, preferred) -> AssetVersion | None:
@@ -56,7 +57,7 @@ def _display_version(db: Session, asset_id: uuid.UUID) -> AssetVersion | None:
     being worked on" is true and useful.
     """
     return _pick_version(
-        db, asset_id, AssetVersion.processing_status.notin_(_UNVIEWABLE_STATUSES)
+        db, asset_id, AssetVersion.processing_status.notin_(_UNDISPLAYABLE_STATUSES)
     )
 
 
@@ -111,7 +112,7 @@ def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetR
             func.max(AssetVersion.version_number).label("max_version"),
         ).filter(AssetVersion.asset_id.in_(asset_ids), AssetVersion.deleted_at.is_(None))
         if viewable_only:
-            q = q.filter(AssetVersion.processing_status.notin_(_UNVIEWABLE_STATUSES))
+            q = q.filter(AssetVersion.processing_status.notin_(_UNDISPLAYABLE_STATUSES))
         subq = q.group_by(AssetVersion.asset_id).subquery()
         return (
             db.query(AssetVersion)
@@ -187,7 +188,7 @@ def list_assets(
         # Exclude assets where the only version is failed or still uploading
         asset_ids = [a.id for a in assets]
         if asset_ids:
-            # Find assets that have at least one non-failed, non-uploading version
+            # Queued work stays visible during a worker outage, but remains non-playable.
             usable = set(
                 row[0] for row in db.query(AssetVersion.asset_id).filter(
                     AssetVersion.asset_id.in_(asset_ids),

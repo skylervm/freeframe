@@ -238,6 +238,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const versionReady = currentVersion?.processing_status === 'ready'
   const versionProcessing =
     currentVersion?.processing_status === 'processing' ||
+    currentVersion?.processing_status === 'queued' ||
     currentVersion?.processing_status === 'uploading'
 
   const renderMediaViewer = () => {
@@ -539,6 +540,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                           'text-xs capitalize',
                           currentVersion.processing_status === 'ready' && 'text-status-success',
                           currentVersion.processing_status === 'processing' && 'text-status-warning',
+                          currentVersion.processing_status === 'queued' && 'text-status-warning',
                           currentVersion.processing_status === 'failed' && 'text-status-error',
                           currentVersion.processing_status === 'uploading' && 'text-text-tertiary',
                         )}>

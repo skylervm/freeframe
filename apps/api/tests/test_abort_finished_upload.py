@@ -49,7 +49,7 @@ def _abort(client, auth_headers):
     )
 
 
-def test_a_completed_upload_is_recorded_as_processing_not_failed(
+def test_a_completed_upload_is_queued_not_failed(
     client, auth_headers, mock_db, abort_rows, monkeypatch
 ):
     """The whole point: the object is there, so this upload did not fail."""
@@ -58,10 +58,10 @@ def test_a_completed_upload_is_recorded_as_processing_not_failed(
     monkeypatch.setattr(upload_module, "abort_multipart_upload",
                         lambda k, u: (_ for _ in ()).throw(_client_error("NoSuchUpload")))
     monkeypatch.setattr(upload_module, "head_object_size", lambda k: 23 * MB)
-    monkeypatch.setattr(upload_module, "_trigger_processing", lambda a, v: dispatched.append(v))
+    monkeypatch.setattr(upload_module, "_kick_processing_dispatch", lambda: dispatched.append(version.id))
 
     assert _abort(client, auth_headers).status_code == 204
-    assert version.processing_status == ProcessingStatus.processing
+    assert version.processing_status == ProcessingStatus.queued
     # It never got its transcode dispatched either, so do that now.
     assert dispatched == [version.id]
 
@@ -73,8 +73,8 @@ def test_a_genuinely_cancelled_upload_still_fails(
     version, _ = abort_rows
     monkeypatch.setattr(upload_module, "abort_multipart_upload", lambda k, u: None)
     monkeypatch.setattr(upload_module, "head_object_size", lambda k: None)
-    monkeypatch.setattr(upload_module, "_trigger_processing",
-                        lambda a, v: pytest.fail("nothing to process"))
+    monkeypatch.setattr(upload_module, "_kick_processing_dispatch",
+                        lambda: pytest.fail("nothing to process"))
 
     assert _abort(client, auth_headers).status_code == 204
     assert version.processing_status == ProcessingStatus.failed

@@ -4,7 +4,7 @@ export type AssetType = "image" | "image_carousel" | "audio" | "video";
 
 export type AssetStatus = "draft" | "in_review" | "approved" | "rejected" | "archived";
 
-export type AssetVersionStatus = "uploading" | "processing" | "ready" | "failed";
+export type AssetVersionStatus = "uploading" | "queued" | "processing" | "ready" | "failed";
 
 export type OrgRole = "owner" | "admin" | "member";
 

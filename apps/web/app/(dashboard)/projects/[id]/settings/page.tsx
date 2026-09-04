@@ -17,6 +17,7 @@ import {
   Check,
   X,
   Upload,
+  KeyRound,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -31,6 +32,20 @@ import type {
   WatermarkContent,
   ViewerLayout,
 } from '@/types'
+
+interface AutomationToken {
+  id: string
+  project_id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+}
+
+interface CreatedAutomationToken extends AutomationToken {
+  token: string
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -584,6 +599,88 @@ function MetadataTab({ projectId }: { projectId: string }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+function AutomationTokensTab({ projectId }: { projectId: string }) {
+  const key = `/projects/${projectId}/automation-tokens`
+  const { data: tokens, mutate } = useSWR<AutomationToken[]>(key, () => api.get<AutomationToken[]>(key))
+  const [name, setName] = React.useState('DJ set pipeline')
+  const [expiresOn, setExpiresOn] = React.useState(() => {
+    const date = new Date()
+    date.setDate(date.getDate() + 90)
+    return date.toISOString().slice(0, 10)
+  })
+  const [creating, setCreating] = React.useState(false)
+  const [created, setCreated] = React.useState<CreatedAutomationToken | null>(null)
+  const [error, setError] = React.useState('')
+
+  const createToken = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setCreating(true)
+    setError('')
+    try {
+      const token = await api.post<CreatedAutomationToken>(key, { name, expires_at: `${expiresOn}T23:59:59Z` })
+      setCreated(token)
+      await mutate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create token')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const revoke = async (token: AutomationToken) => {
+    if (!window.confirm(`Revoke ${token.name}? The DJ pipeline will no longer be able to use it.`)) return
+    setError('')
+    try {
+      await api.delete(`${key}/${token.id}`)
+      await mutate()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not revoke token')
+    }
+  }
+
+  return (
+    <div className="space-y-5 max-w-2xl">
+      <div>
+        <h2 className="text-base font-semibold text-text-primary">Automation tokens</h2>
+        <p className="mt-1 text-sm text-text-secondary">Project-limited credentials for unattended uploads. They cannot access other projects.</p>
+      </div>
+      <form onSubmit={createToken} className="flex gap-2">
+        <Input value={name} onChange={(event) => setName(event.target.value)} aria-label="Token name" />
+        <Input type="date" value={expiresOn} onChange={(event) => setExpiresOn(event.target.value)} aria-label="Token expiry" />
+        <Button type="submit" disabled={creating || !name.trim() || !expiresOn}>{creating ? 'Creating…' : 'Create token'}</Button>
+      </form>
+      {error && <p className="text-sm text-status-error">{error}</p>}
+      {tokens?.length ? (
+        <div className="rounded-lg border border-border divide-y divide-border">
+          {tokens.map((token) => (
+            <div key={token.id} className="flex items-center justify-between gap-4 px-4 py-3">
+              <div>
+                <p className="text-sm font-medium text-text-primary">{token.name}</p>
+                <p className="text-xs text-text-tertiary">{token.revoked_at ? 'Revoked' : token.expires_at ? `Expires ${new Date(token.expires_at).toLocaleDateString()}${token.last_used_at ? ` · Last used ${new Date(token.last_used_at).toLocaleDateString()}` : ''}` : 'No expiry set'}</p>
+              </div>
+              {!token.revoked_at && <Button variant="ghost" size="sm" onClick={() => revoke(token)} className="text-status-error hover:text-status-error">Revoke</Button>}
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-sm text-text-tertiary">No automation tokens yet.</p>}
+      <Dialog.Root open={Boolean(created)} onOpenChange={(open) => !open && setCreated(null)}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+          <Dialog.Content className="fixed z-50 left-1/2 top-1/2 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-bg-primary p-6 shadow-xl">
+            <Dialog.Title className="text-base font-semibold text-text-primary">Save this token now</Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm text-text-secondary">It is shown once. Save it in a local secret file outside the project folder, then give the pipeline only that file path.</Dialog.Description>
+            <textarea readOnly value={created?.token ?? ''} className="mt-4 h-24 w-full rounded-md border border-border bg-bg-secondary p-3 font-mono text-xs text-text-primary" />
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => navigator.clipboard.writeText(created?.token ?? '')}>Copy</Button>
+              <Button onClick={() => setCreated(null)}>Done</Button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    </div>
+  )
+}
+
 export default function ProjectSettingsPage() {
   const params = useParams()
   const projectId = params.id as string
@@ -598,6 +695,7 @@ export default function ProjectSettingsPage() {
             { value: 'branding', label: 'Branding', icon: Palette },
             { value: 'watermark', label: 'Watermark', icon: Droplets },
             { value: 'metadata', label: 'Metadata Fields', icon: List },
+            { value: 'automation', label: 'Automation', icon: KeyRound },
           ].map(({ value, label, icon: Icon }) => (
             <Tabs.Trigger
               key={value}
@@ -623,6 +721,9 @@ export default function ProjectSettingsPage() {
           </Tabs.Content>
           <Tabs.Content value="metadata">
             <MetadataTab projectId={projectId} />
+          </Tabs.Content>
+          <Tabs.Content value="automation">
+            <AutomationTokensTab projectId={projectId} />
           </Tabs.Content>
         </div>
       </Tabs.Root>
