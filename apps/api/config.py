@@ -56,6 +56,17 @@ class Settings(BaseSettings):
     cors_allow_origins: str = ""
     transcoder_engine: str = "ffmpeg"
 
+    # Disabled unless both values are configured. This credential can create a
+    # new private project and one bounded project-scoped automation token, but
+    # cannot read or mutate existing projects.
+    automation_bootstrap_token_sha256: str | None = None
+    automation_bootstrap_owner_id: str | None = None
+    automation_bootstrap_token_lifetime_hours: int = 72
+    automation_bootstrap_max_projects_per_day: int = 3
+    automation_bootstrap_max_renewals_per_day: int = 3
+    automation_bootstrap_max_file_bytes: int = 20 * 1024 * 1024 * 1024
+    automation_bootstrap_max_total_upload_bytes: int = 100 * 1024 * 1024 * 1024
+
     # Maximum size (bytes) for a single uploaded file. 0 = unlimited (no per-file cap).
     # Note: S3 multipart still caps effective size at ~10,000 parts x chunk size.
     max_upload_bytes: int = 0

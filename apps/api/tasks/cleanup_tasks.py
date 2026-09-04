@@ -211,6 +211,9 @@ def _purge_project(db, project_id, counts: PurgeCounts) -> None:
         db.query(ProjectBranding).filter(ProjectBranding.project_id == project_id).delete(synchronize_session=False)
     db.query(WatermarkSettings).filter(WatermarkSettings.project_id == project_id).delete(synchronize_session=False)
     from ..models.automation_token import ProjectAutomationToken
+    from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRenewal
+    db.query(AutomationBootstrapRenewal).filter(AutomationBootstrapRenewal.project_id == project_id).delete(synchronize_session=False)
+    db.query(AutomationBootstrapRequest).filter(AutomationBootstrapRequest.project_id == project_id).delete(synchronize_session=False)
     db.query(ProjectAutomationToken).filter(ProjectAutomationToken.project_id == project_id).delete(synchronize_session=False)
     db.query(ProjectMember).filter(ProjectMember.project_id == project_id).delete(synchronize_session=False)
     db.query(ActivityLog).filter(ActivityLog.project_id == project_id).delete(synchronize_session=False)

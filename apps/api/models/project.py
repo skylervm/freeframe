@@ -42,3 +42,31 @@ class ProjectMember(Base):
     invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AutomationBootstrapRequest(Base):
+    """Durable idempotency record for a terminal-created project."""
+
+    __tablename__ = "automation_bootstrap_requests"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_automation_bootstrap_request_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    token_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("project_automation_tokens.id"), nullable=False)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AutomationBootstrapRenewal(Base):
+    __tablename__ = "automation_bootstrap_renewals"
+    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_automation_bootstrap_renewal_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
+    token_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("project_automation_tokens.id"), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

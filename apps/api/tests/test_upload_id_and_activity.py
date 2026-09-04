@@ -20,6 +20,7 @@ def presign_rows(mock_db, test_user):
     media_file = MagicMock()
     media_file.version_id = uuid.uuid4()
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
+    media_file.file_size_bytes = 1
 
     version = MagicMock()
     version.id = media_file.version_id
@@ -31,10 +32,13 @@ def presign_rows(mock_db, test_user):
     return media_file, version
 
 
-def _presign(client, auth_headers, media_file, upload_id, part=1):
+def _presign(client, auth_headers, media_file, upload_id, part=1, content_length=1):
+    body = {"s3_key": media_file.s3_key_raw, "upload_id": upload_id, "part_number": part}
+    if content_length is not None:
+        body["content_length"] = content_length
     return client.post(
         "/upload/presign-part",
-        json={"s3_key": media_file.s3_key_raw, "upload_id": upload_id, "part_number": part},
+        json=body,
         headers=auth_headers,
     )
 
@@ -48,7 +52,7 @@ def test_presign_signs_the_upload_the_version_belongs_to(
     signed = {}
     monkeypatch.setattr(
         upload_module, "presign_upload_part",
-        lambda k, u, n: signed.update(key=k, upload=u, part=n) or "https://s3/url",
+        lambda k, u, n, size: signed.update(key=k, upload=u, part=n, size=size) or "https://s3/url",
     )
 
     resp = _presign(client, auth_headers, media_file, "the-real-upload-id")
@@ -64,7 +68,7 @@ def test_presign_refuses_an_upload_id_the_version_does_not_own(
     media_file, _ = presign_rows
     monkeypatch.setattr(
         upload_module, "presign_upload_part",
-        lambda k, u, n: pytest.fail("must not sign a foreign upload id"),
+        lambda k, u, n, size: pytest.fail("must not sign a foreign upload id"),
     )
 
     resp = _presign(client, auth_headers, media_file, "some-other-upload")
@@ -79,9 +83,20 @@ def test_presign_still_works_for_versions_recorded_before_this_column_existed(
     upgrade must not start failing halfway."""
     media_file, version = presign_rows
     version.upload_id = None
-    monkeypatch.setattr(upload_module, "presign_upload_part", lambda k, u, n: "https://s3/url")
+    monkeypatch.setattr(upload_module, "presign_upload_part", lambda k, u, n, size: "https://s3/url")
 
     assert _presign(client, auth_headers, media_file, "whatever-it-was").status_code == 200
+
+
+def test_presign_accepts_a_cached_client_without_content_length(
+    client, auth_headers, mock_db, presign_rows, monkeypatch
+):
+    media_file, _ = presign_rows
+    signed = {}
+    monkeypatch.setattr(upload_module, "presign_upload_part", lambda k, u, n, size: signed.update(size=size) or "https://s3/url")
+
+    assert _presign(client, auth_headers, media_file, "the-real-upload-id", content_length=None).status_code == 200
+    assert signed["size"] == media_file.file_size_bytes
 
 
 def test_presign_refuses_a_version_the_reaper_already_soft_deleted(real_db, monkeypatch):
@@ -115,11 +130,11 @@ def test_presign_refuses_a_version_the_reaper_already_soft_deleted(real_db, monk
     real_db.flush()
 
     monkeypatch.setattr(upload_module, "presign_upload_part",
-                        lambda k, u, n: pytest.fail("must not sign for a deleted version"))
+                        lambda k, u, n, size: pytest.fail("must not sign for a deleted version"))
 
     with pytest.raises(HTTPException) as exc:
         upload_module.presign_part(
-            PresignPartRequest(s3_key=key, upload_id="u-1", part_number=1),
+            PresignPartRequest(s3_key=key, upload_id="u-1", part_number=1, content_length=1),
             db=real_db, current_user=owner,
         )
     assert exc.value.status_code == 403
@@ -131,7 +146,7 @@ def test_presign_records_activity_so_a_slow_upload_is_not_reaped(
     client, auth_headers, mock_db, presign_rows, monkeypatch
 ):
     media_file, version = presign_rows
-    monkeypatch.setattr(upload_module, "presign_upload_part", lambda k, u, n: "https://s3/url")
+    monkeypatch.setattr(upload_module, "presign_upload_part", lambda k, u, n, size: "https://s3/url")
     before = datetime.now(timezone.utc)
 
     _presign(client, auth_headers, media_file, "the-real-upload-id")

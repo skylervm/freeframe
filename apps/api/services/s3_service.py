@@ -239,8 +239,8 @@ def create_multipart_upload(s3_key: str, content_type: str) -> str:
     )
     return response["UploadId"]
 
-def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_in: int = 3600) -> str:
-    """Return a presigned URL for uploading a single part."""
+def presign_upload_part(s3_key: str, upload_id: str, part_number: int, content_length: int, expires_in: int = 3600) -> str:
+    """Return a URL whose SigV4 signature binds this part's exact byte length."""
     s3 = _get_presign_client()
     return s3.generate_presigned_url(
         "upload_part",
@@ -249,6 +249,7 @@ def presign_upload_part(s3_key: str, upload_id: str, part_number: int, expires_i
             "Key": s3_key,
             "UploadId": upload_id,
             "PartNumber": part_number,
+            "ContentLength": content_length,
         },
         ExpiresIn=expires_in,
     )

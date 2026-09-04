@@ -418,7 +418,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         "collections", "metadata_fields", "approvals", "asset_shares", "asset_metadata", "carousel_items",
         "collection_shares", "share_link_items", "share_link_activity", "watermark_settings",
         "project_members", "project_brandings", "activity_logs", "annotations", "comment_attachments",
-        "comment_reactions", "mentions", "notifications",
+        "comment_reactions", "mentions", "notifications", "project_automation_tokens",
     }
     # (referencing_table, referencing_column) confirmed handled by a _purge_* helper.
     KNOWN_HANDLED = {
@@ -428,6 +428,12 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("metadata_fields", "project_id"), ("collections", "project_id"),
             ("project_members", "project_id"), ("activity_logs", "project_id"),
             ("project_automation_tokens", "project_id"),
+            ("automation_bootstrap_requests", "project_id"),
+            ("automation_bootstrap_renewals", "project_id"),
+        # -> project_automation_tokens.id
+        ("automation_bootstrap_requests", "token_id"),
+        ("automation_bootstrap_renewals", "token_id"),
+        ("asset_versions", "automation_token_id"),
         # -> folders.id
         ("assets", "folder_id"), ("share_links", "folder_id"), ("share_link_items", "folder_id"),
         ("asset_shares", "folder_id"), ("folders", "parent_id"),

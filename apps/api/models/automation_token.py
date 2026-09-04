@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -24,3 +24,8 @@ class ProjectAutomationToken(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Null means an ordinary browser-created token. Bootstrap-created tokens
+    # carry server-controlled limits and reserve their declared upload bytes.
+    max_file_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    max_total_upload_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reserved_upload_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
