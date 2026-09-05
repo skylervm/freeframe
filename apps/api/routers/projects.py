@@ -10,7 +10,7 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.automation_token import ProjectAutomationToken
-from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
+from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
@@ -27,9 +27,48 @@ def _get_project(db: Session, project_id: uuid.UUID) -> Project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
-def _resolve_poster_url(project: Project) -> str | None:
+def _automatic_poster_keys(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """Return each project's oldest video's newest ready thumbnail."""
+    if not project_ids:
+        return {}
+    rows = (
+        db.query(
+            Asset.project_id,
+            Asset.id,
+            AssetVersion.version_number,
+            MediaFile.s3_key_thumbnail,
+        )
+        .join(AssetVersion, AssetVersion.asset_id == Asset.id)
+        .join(MediaFile, MediaFile.version_id == AssetVersion.id)
+        .filter(
+            Asset.project_id.in_(project_ids),
+            Asset.asset_type == AssetType.video,
+            Asset.deleted_at.is_(None),
+            AssetVersion.deleted_at.is_(None),
+            AssetVersion.processing_status == ProcessingStatus.ready,
+            MediaFile.s3_key_thumbnail.isnot(None),
+        )
+        .order_by(
+            Asset.project_id.asc(),
+            Asset.created_at.asc(),
+            Asset.id.asc(),
+            AssetVersion.version_number.desc(),
+            MediaFile.sequence_order.asc().nullsfirst(),
+            MediaFile.id.asc(),
+        )
+        .all()
+    )
+    covers: dict[uuid.UUID, str] = {}
+    for project_id, _asset_id, _version_number, thumbnail_key in rows:
+        covers.setdefault(project_id, thumbnail_key)
+    return covers
+
+
+def _resolve_poster_url(project: Project, automatic_poster_key: str | None = None) -> str | None:
     if project.poster_s3_key:
         return generate_presigned_get_url(project.poster_s3_key)
+    if automatic_poster_key:
+        return generate_presigned_get_url(automatic_poster_key)
     return None
 
 def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> ProjectMember:
@@ -183,10 +222,11 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         .all()
     )
 
+    automatic_poster_keys = _automatic_poster_keys(db, all_project_ids)
     result = []
     for p in projects:
         resp = ProjectResponse.model_validate(p)
-        resp.poster_url = _resolve_poster_url(p)
+        resp.poster_url = _resolve_poster_url(p, automatic_poster_keys.get(p.id))
         resp.asset_count = asset_counts.get(p.id, 0)
         resp.storage_bytes = storage_map.get(p.id, 0)
         resp.member_count = member_counts.get(p.id, 0)
@@ -206,7 +246,7 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
     if not member and not project.is_public:
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project)
+    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
     if member:
         resp.role = member.role
     # Calculate storage, asset count, member count
@@ -232,7 +272,7 @@ def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Dep
     db.commit()
     db.refresh(project)
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project)
+    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
     return resp
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -353,7 +393,7 @@ async def upload_project_poster(
     db.refresh(project)
 
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project)
+    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
     return resp
 
 @router.delete("/{project_id}/poster", status_code=status.HTTP_204_NO_CONTENT)
