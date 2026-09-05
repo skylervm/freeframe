@@ -12,6 +12,7 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     is_public: bool | None = None
+    restore_automatic_poster: bool = False
 
 class ProjectResponse(BaseModel):
     id: uuid.UUID

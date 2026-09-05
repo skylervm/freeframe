@@ -263,13 +263,22 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
 def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = _get_project(db, project_id)
     _require_project_owner(db, project_id, current_user)
+    poster_to_delete = None
     if body.name is not None:
         project.name = body.name
     if body.description is not None:
         project.description = body.description
     if body.is_public is not None:
         project.is_public = body.is_public
+    if body.restore_automatic_poster and project.poster_s3_key:
+        poster_to_delete = project.poster_s3_key
+        project.poster_s3_key = None
     db.commit()
+    if poster_to_delete:
+        try:
+            delete_object(poster_to_delete)
+        except Exception:
+            pass
     db.refresh(project)
     resp = ProjectResponse.model_validate(project)
     resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
@@ -377,19 +386,18 @@ async def upload_project_poster(
     if len(data) > MAX_POSTER_SIZE:
         raise HTTPException(status_code=400, detail="File must be under 10MB")
 
-    # Delete old poster if exists
-    if project.poster_s3_key:
-        try:
-            delete_object(project.poster_s3_key)
-        except Exception:
-            pass
-
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
-    s3_key = f"posters/{project_id}/poster.{ext}"
+    old_poster_key = project.poster_s3_key
+    s3_key = f"posters/{project_id}/{uuid.uuid4()}.{ext}"
     put_object(s3_key, data, content_type=file.content_type, cache_control="max-age=86400")
 
     project.poster_s3_key = s3_key
     db.commit()
+    if old_poster_key:
+        try:
+            delete_object(old_poster_key)
+        except Exception:
+            pass
     db.refresh(project)
 
     resp = ProjectResponse.model_validate(project)

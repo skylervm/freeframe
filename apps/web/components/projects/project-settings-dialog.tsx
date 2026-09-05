@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { ProjectPosterCropDialog } from '@/components/projects/project-poster-crop-dialog'
 import type { Project } from '@/types'
 
 interface ProjectSettingsDialogProps {
@@ -28,6 +29,8 @@ export function ProjectSettingsDialog({
   const [isPublic, setIsPublic] = React.useState(project.is_public ?? false)
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
+  const [pendingCrop, setPendingCrop] = React.useState<File | null>(null)
+  const [removePoster, setRemovePoster] = React.useState(false)
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -40,14 +43,35 @@ export function ProjectSettingsDialog({
     setIsPublic(project.is_public ?? false)
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
+    setPendingCrop(null)
+    setRemovePoster(false)
     setSaveError(null)
   }, [project.id, open])
 
   const handlePosterSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    e.target.value = ''
+    if (file.type === 'image/gif') {
+      setRemovePoster(false)
+      setPosterFile(file)
+      setPosterPreview(URL.createObjectURL(file))
+      return
+    }
+    setPendingCrop(file)
+  }
+
+  const handleCropConfirm = (file: File) => {
+    setPendingCrop(null)
+    setRemovePoster(false)
     setPosterFile(file)
     setPosterPreview(URL.createObjectURL(file))
+  }
+
+  const handleUseAutomaticPoster = () => {
+    setPosterFile(null)
+    setRemovePoster(true)
+    setPosterPreview(null)
   }
 
   const handleSave = async () => {
@@ -66,6 +90,7 @@ export function ProjectSettingsDialog({
         name: name.trim(),
         description: description.trim() || null,
         is_public: isPublic,
+        restore_automatic_poster: removePoster,
       })
 
       onUpdated()
@@ -128,6 +153,24 @@ export function ProjectSettingsDialog({
                   className="hidden"
                   onChange={handlePosterSelect}
                 />
+                <div className="flex w-full flex-col gap-1.5">
+                  <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    {posterPreview ? 'Change cover' : 'Upload cover'}
+                  </Button>
+                  {(posterPreview || posterFile) && (
+                    <button
+                      type="button"
+                      onClick={handleUseAutomaticPoster}
+                      className="text-xs text-text-tertiary transition-colors hover:text-text-primary"
+                    >
+                      Use automatic thumbnail
+                    </button>
+                  )}
+                  {removePoster && (
+                    <p className="text-center text-xs text-text-tertiary">The automatic thumbnail will return when you save.</p>
+                  )}
+                </div>
 
                 {/* Project name input */}
                 <input
@@ -206,6 +249,11 @@ export function ProjectSettingsDialog({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <ProjectPosterCropDialog
+        file={pendingCrop}
+        onCancel={() => setPendingCrop(null)}
+        onConfirm={handleCropConfirm}
+      />
     </Dialog.Root>
   )
 }
