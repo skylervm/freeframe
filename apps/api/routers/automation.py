@@ -13,7 +13,7 @@ from ..config import settings
 from ..database import get_db
 from ..middleware.automation_auth import AutomationActor, get_automation_actor
 from ..middleware.bootstrap_auth import BootstrapActor, get_bootstrap_actor
-from ..models.asset import Asset, AssetVersion, MediaFile
+from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..models.activity import ActivityLog
 from ..models.automation_token import ProjectAutomationToken
 from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRenewal, Project, ProjectMember, ProjectRole, ProjectType
@@ -372,6 +372,41 @@ def list_comments(
         }
         for comment in comments if _CLIP_INSTRUCTION.match(comment.body or "")
     ]
+
+
+@router.get("/assets/{asset_id}/review-version")
+def get_review_version(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    """Return the same current viewable version selected by the review UI."""
+    _asset_in_scope(db, asset_id, actor)
+    version = db.query(AssetVersion).filter(
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+        AssetVersion.processing_status == ProcessingStatus.ready,
+    ).order_by(AssetVersion.version_number.desc()).first()
+    if not version:
+        version = db.query(AssetVersion).filter(
+            AssetVersion.asset_id == asset_id,
+            AssetVersion.deleted_at.is_(None),
+            AssetVersion.processing_status.notin_(
+                (ProcessingStatus.uploading, ProcessingStatus.failed)
+            ),
+        ).order_by(AssetVersion.version_number.desc()).first()
+    if not version:
+        version = db.query(AssetVersion).filter(
+            AssetVersion.asset_id == asset_id,
+            AssetVersion.deleted_at.is_(None),
+        ).order_by(AssetVersion.version_number.desc()).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="No viewable version found")
+    return {
+        "id": version.id,
+        "version_number": version.version_number,
+        "processing_status": version.processing_status,
+    }
 
 
 @router.get("/versions/{version_id}")
