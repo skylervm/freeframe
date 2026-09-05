@@ -32,6 +32,7 @@ class Project(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    trash_operation_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("trash_operations.id"), nullable=True, index=True)
 
 class ProjectMember(Base):
     __tablename__ = "project_members"

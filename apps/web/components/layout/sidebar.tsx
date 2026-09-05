@@ -12,6 +12,7 @@ import {
   LogOut,
   User,
   ChevronsLeft,
+  Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
@@ -34,6 +35,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: '/projects', label: 'Projects', icon: Layers },
+  { href: '/trash', label: 'Trash', icon: Trash2 },
 ]
 
 interface SidebarProps {

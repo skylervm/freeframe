@@ -3,14 +3,15 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.asset import Asset
 from ..models.folder import Folder
-from ..models.project import Project, ProjectRole
+from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.trash import TrashEntityType, TrashOperation
 from ..models.user import User
 from ..schemas.folder import (
     AssetMoveRequest,
@@ -295,14 +296,31 @@ def delete_folder(
 
     now = datetime.now(timezone.utc)
 
+    project_owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == folder.project_id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not project_owner:
+        raise HTTPException(status_code=409, detail="Project has no active owner")
+    operation = TrashOperation(
+        entity_type=TrashEntityType.folder,
+        entity_id=folder.id,
+        deleted_by_id=current_user.id,
+        project_id=folder.project_id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+
     # Cascade soft-delete: folder + all descendants + their assets
     all_folder_ids = [folder_id] + _get_descendant_ids(db, folder_id)
 
-    db.query(Folder).filter(Folder.id.in_(all_folder_ids)).update(
-        {"deleted_at": now}, synchronize_session="fetch"
+    db.query(Folder).filter(Folder.id.in_(all_folder_ids), Folder.deleted_at.is_(None)).update(
+        {"deleted_at": now, "trash_operation_id": operation.id}, synchronize_session="fetch"
     )
-    db.query(Asset).filter(Asset.folder_id.in_(all_folder_ids)).update(
-        {"deleted_at": now}, synchronize_session="fetch"
+    db.query(Asset).filter(Asset.folder_id.in_(all_folder_ids), Asset.deleted_at.is_(None)).update(
+        {"deleted_at": now, "trash_operation_id": operation.id}, synchronize_session="fetch"
     )
 
     db.commit()
@@ -461,7 +479,53 @@ def restore_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Deleted asset not found")
 
-    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == asset.project_id,
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=403, detail="Project owner access required")
+
+    if asset.trash_operation_id:
+        from ..models.trash import TrashOperation
+        from ..tasks.cleanup_tasks import _PURGE_ADVISORY_LOCK_KEY
+        operation_id = asset.trash_operation_id
+        if not db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _PURGE_ADVISORY_LOCK_KEY}).scalar():
+            raise HTTPException(status_code=409, detail="Trash cleanup is already running; try again shortly")
+        asset = db.query(Asset).filter(
+            Asset.id == asset_id,
+            Asset.trash_operation_id == operation_id,
+            Asset.deleted_at.isnot(None),
+        ).populate_existing().with_for_update().first()
+        if not asset:
+            raise HTTPException(status_code=409, detail="Deleted asset changed; refresh Trash and try again")
+        owner = db.query(ProjectMember).filter(
+            ProjectMember.project_id == asset.project_id,
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.role == ProjectRole.owner,
+            ProjectMember.deleted_at.is_(None),
+        ).first()
+        if not owner:
+            raise HTTPException(status_code=403, detail="Project owner access required")
+        operation = db.query(TrashOperation).filter(
+            TrashOperation.id == operation_id,
+            TrashOperation.restored_at.is_(None),
+        ).with_for_update().first()
+        if not operation:
+            raise HTTPException(status_code=409, detail="Deleted asset is no longer recoverable")
+        project = db.query(Project).filter(Project.id == asset.project_id, Project.deleted_at.is_(None)).with_for_update().first()
+        if not project:
+            raise HTTPException(status_code=409, detail="Cannot restore: the project is still deleted")
+        if asset.folder_id and not db.query(Folder.id).filter(Folder.id == asset.folder_id, Folder.deleted_at.is_(None)).first():
+            asset.folder_id = None
+        asset.deleted_at = None
+        asset.trash_operation_id = None
+        if operation.entity_id == asset.id:
+            operation.restored_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"ok": True}
 
     # A deleted project has no restore path, so restoring an asset into a soft-deleted project would be
     # a false success — the retention GC's project cascade would silently hard-delete it. Refuse.
@@ -494,7 +558,74 @@ def restore_folder(
     if not folder:
         raise HTTPException(status_code=404, detail="Deleted folder not found")
 
-    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.editor)
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == folder.project_id,
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=403, detail="Project owner access required")
+
+    if folder.trash_operation_id:
+        from ..models.trash import TrashOperation
+        from ..tasks.cleanup_tasks import _PURGE_ADVISORY_LOCK_KEY
+        operation_id = folder.trash_operation_id
+        if not db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _PURGE_ADVISORY_LOCK_KEY}).scalar():
+            raise HTTPException(status_code=409, detail="Trash cleanup is already running; try again shortly")
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.trash_operation_id == operation_id,
+            Folder.deleted_at.isnot(None),
+        ).populate_existing().with_for_update().first()
+        if not folder:
+            raise HTTPException(status_code=409, detail="Deleted folder changed; refresh Trash and try again")
+        owner = db.query(ProjectMember).filter(
+            ProjectMember.project_id == folder.project_id,
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.role == ProjectRole.owner,
+            ProjectMember.deleted_at.is_(None),
+        ).first()
+        if not owner:
+            raise HTTPException(status_code=403, detail="Project owner access required")
+        operation = db.query(TrashOperation).filter(
+            TrashOperation.id == operation_id,
+            TrashOperation.restored_at.is_(None),
+        ).with_for_update().first()
+        if not operation:
+            raise HTTPException(status_code=409, detail="Deleted folder is no longer recoverable")
+        project = db.query(Project).filter(Project.id == folder.project_id, Project.deleted_at.is_(None)).with_for_update().first()
+        if not project:
+            raise HTTPException(status_code=409, detail="Cannot restore: the project is still deleted")
+        if folder.parent_id and not db.query(Folder.id).filter(Folder.id == folder.parent_id, Folder.deleted_at.is_(None)).first():
+            folder.parent_id = None
+        conflict = db.query(Folder.id).filter(
+            Folder.project_id == folder.project_id,
+            Folder.parent_id == folder.parent_id,
+            Folder.name == folder.name,
+            Folder.id != folder.id,
+            Folder.deleted_at.is_(None),
+        ).first()
+        if conflict:
+            raise HTTPException(status_code=409, detail="Cannot restore: a folder with this name already exists at the destination")
+        subtree_ids = [folder.id] + _get_descendant_ids_including_deleted(db, folder.id)
+        owned_subtree_ids = [item_id for (item_id,) in db.query(Folder.id).filter(
+            Folder.id.in_(subtree_ids),
+            Folder.trash_operation_id == operation.id,
+            Folder.deleted_at.isnot(None),
+        ).all()]
+        db.query(Folder).filter(Folder.id.in_(owned_subtree_ids)).update(
+            {Folder.deleted_at: None, Folder.trash_operation_id: None}, synchronize_session=False
+        )
+        db.query(Asset).filter(
+            Asset.folder_id.in_(owned_subtree_ids),
+            Asset.trash_operation_id == operation.id,
+            Asset.deleted_at.isnot(None),
+        ).update({Asset.deleted_at: None, Asset.trash_operation_id: None}, synchronize_session=False)
+        if operation.entity_id == folder.id:
+            operation.restored_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"ok": True}
 
     project = db.query(Project).filter(Project.id == folder.project_id).first()
     if project is None or project.deleted_at is not None:
@@ -510,17 +641,18 @@ def restore_folder(
         if not parent:
             folder.parent_id = None
 
-    # Restore folder and all its descendants + their assets
+    conflict = db.query(Folder.id).filter(
+        Folder.project_id == folder.project_id,
+        Folder.parent_id == folder.parent_id,
+        Folder.name == folder.name,
+        Folder.id != folder.id,
+        Folder.deleted_at.is_(None),
+    ).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail="Cannot restore: a folder with this name already exists at the destination")
+
+    # Legacy tombstones predate operation provenance. Restoring just the root is
+    # the only safe behavior because their cascade membership is unknowable.
     folder.deleted_at = None
-    descendant_ids = _get_descendant_ids_including_deleted(db, folder_id)
-    all_ids = [folder_id] + descendant_ids
-
-    db.query(Folder).filter(Folder.id.in_(all_ids)).update(
-        {"deleted_at": None}, synchronize_session="fetch"
-    )
-    db.query(Asset).filter(Asset.folder_id.in_(all_ids), Asset.deleted_at.isnot(None)).update(
-        {"deleted_at": None}, synchronize_session="fetch"
-    )
-
     db.commit()
     return {"ok": True}

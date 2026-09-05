@@ -12,3 +12,4 @@ from .activity import Mention, ActivityLog, Notification
 from .automation_token import ProjectAutomationToken
 from .workspace import Workspace, WorkspaceMember
 from .project_folder import ProjectFolder, ProjectFolderShare, PersonalProjectPlacement
+from .trash import TrashOperation, TrashEntityType, TrashStorageDeletion

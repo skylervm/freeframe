@@ -11,6 +11,7 @@ from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.automation_token import ProjectAutomationToken
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
+from ..models.trash import TrashEntityType, TrashOperation
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
@@ -273,7 +274,18 @@ def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Dep
 def delete_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = _get_project(db, project_id)
     _require_project_owner(db, project_id, current_user)
-    project.deleted_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.project,
+        entity_id=project.id,
+        deleted_by_id=current_user.id,
+        project_id=project.id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    project.deleted_at = now
+    project.trash_operation_id = operation.id
     db.commit()
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])

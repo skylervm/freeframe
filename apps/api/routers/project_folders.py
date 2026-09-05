@@ -1,12 +1,15 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.asset import Asset
+from ..models.folder import Folder
 from ..models.project_folder import (
     PersonalProjectPlacement,
     ProjectFolder,
@@ -15,6 +18,8 @@ from ..models.project_folder import (
 )
 from ..models.user import User
 from ..models.workspace import Workspace, WorkspaceMember, WorkspaceRole
+from ..models.trash import TrashEntityType, TrashOperation
+from ..config import settings
 from ..schemas.project_folder import (
     PersonalProjectPlacementRequest,
     PersonalProjectPlacementResponse,
@@ -171,6 +176,266 @@ def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> No
     ).first()
     if not owner:
         raise HTTPException(status_code=403, detail="Project owner access required")
+
+
+def _operation_type(operation: TrashOperation) -> TrashEntityType:
+    return TrashEntityType(operation.entity_type)
+
+
+def _require_trash_authority(db: Session, operation: TrashOperation, user: User) -> None:
+    """Authorize against current ownership, never the user who deleted the item."""
+    if operation.project_id:
+        _require_project_owner(db, operation.project_id, user)
+        return
+    if _operation_type(operation) == TrashEntityType.project_folder:
+        folder = db.query(ProjectFolder).filter(ProjectFolder.id == operation.entity_id).first()
+        if not folder or folder.owner_id != user.id:
+            raise HTTPException(status_code=403, detail="Project folder owner access required")
+        return
+    raise HTTPException(status_code=404, detail="Deleted item not found")
+
+
+def _trash_operation(db: Session, operation_id: uuid.UUID, user: User) -> TrashOperation:
+    operation = db.query(TrashOperation).filter(
+        TrashOperation.id == operation_id,
+        TrashOperation.restored_at.is_(None),
+    ).with_for_update().first()
+    if not operation:
+        raise HTTPException(status_code=404, detail="Deleted item not found")
+    _require_trash_authority(db, operation, user)
+    return operation
+
+
+def _trash_item_name(db: Session, operation: TrashOperation) -> str | None:
+    model = {
+        TrashEntityType.asset: Asset,
+        TrashEntityType.folder: Folder,
+        TrashEntityType.project: Project,
+        TrashEntityType.project_folder: ProjectFolder,
+    }[_operation_type(operation)]
+    item = db.query(model).filter(model.id == operation.entity_id).first()
+    return item.name if item else None
+
+
+def _restore_project_folder_operation(db: Session, operation: TrashOperation) -> None:
+    root = db.query(ProjectFolder).filter(
+        ProjectFolder.id == operation.entity_id,
+        ProjectFolder.trash_operation_id == operation.id,
+        ProjectFolder.deleted_at.isnot(None),
+    ).with_for_update().first()
+    if not root:
+        raise HTTPException(status_code=409, detail="Deleted project folder is no longer recoverable")
+
+    active_parent = _get_folder_or_none(db, root.parent_id)
+    if root.parent_id and not active_parent:
+        root.parent_id = None
+        # A workspace folder leaving a private ancestor must not become visible to
+        # every workspace member merely because its former parent was purged.
+        root.is_private = True
+    conflict = db.query(ProjectFolder.id).filter(
+        ProjectFolder.workspace_id == root.workspace_id,
+        ProjectFolder.parent_id == root.parent_id,
+        ProjectFolder.owner_id == root.owner_id,
+        ProjectFolder.name == root.name,
+        ProjectFolder.id != root.id,
+        ProjectFolder.deleted_at.is_(None),
+    ).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail="Cannot restore: a folder with this name already exists at the destination")
+
+    db.query(ProjectFolder).filter(
+        ProjectFolder.trash_operation_id == operation.id,
+        ProjectFolder.deleted_at.isnot(None),
+    ).update({ProjectFolder.deleted_at: None, ProjectFolder.trash_operation_id: None}, synchronize_session=False)
+
+    placements = db.query(PersonalProjectPlacement).filter(
+        PersonalProjectPlacement.trash_operation_id == operation.id,
+        PersonalProjectPlacement.deleted_at.isnot(None),
+    ).all()
+    for placement in placements:
+        replacement = db.query(PersonalProjectPlacement.id).filter(
+            PersonalProjectPlacement.user_id == placement.user_id,
+            PersonalProjectPlacement.project_id == placement.project_id,
+            PersonalProjectPlacement.deleted_at.is_(None),
+        ).first()
+        if placement.restore_eligible and not replacement:
+            placement.deleted_at = None
+            placement.trash_operation_id = None
+
+    shares = db.query(ProjectFolderShare).filter(
+        ProjectFolderShare.trash_operation_id == operation.id,
+        ProjectFolderShare.deleted_at.isnot(None),
+    ).all()
+    for share in shares:
+        replacement = db.query(ProjectFolderShare.id).filter(
+            ProjectFolderShare.folder_id == share.folder_id,
+            ProjectFolderShare.user_id == share.user_id,
+            ProjectFolderShare.deleted_at.is_(None),
+        ).first()
+        if not replacement:
+            share.deleted_at = None
+            share.trash_operation_id = None
+
+
+def _restore_media_folder_operation(db: Session, operation: TrashOperation) -> None:
+    project = db.query(Project).filter(
+        Project.id == operation.project_id,
+        Project.deleted_at.is_(None),
+    ).with_for_update().first()
+    if not project:
+        raise HTTPException(status_code=409, detail="Cannot restore: the project is still deleted")
+    root = db.query(Folder).filter(
+        Folder.id == operation.entity_id,
+        Folder.trash_operation_id == operation.id,
+        Folder.deleted_at.isnot(None),
+    ).with_for_update().first()
+    if not root:
+        raise HTTPException(status_code=409, detail="Deleted folder is no longer recoverable")
+    parent = db.query(Folder).filter(Folder.id == root.parent_id, Folder.deleted_at.is_(None)).first() if root.parent_id else None
+    if root.parent_id and not parent:
+        root.parent_id = None
+    conflict = db.query(Folder.id).filter(
+        Folder.project_id == root.project_id,
+        Folder.parent_id == root.parent_id,
+        Folder.name == root.name,
+        Folder.id != root.id,
+        Folder.deleted_at.is_(None),
+    ).first()
+    if conflict:
+        raise HTTPException(status_code=409, detail="Cannot restore: a folder with this name already exists at the destination")
+    db.query(Folder).filter(Folder.trash_operation_id == operation.id, Folder.deleted_at.isnot(None)).update(
+        {Folder.deleted_at: None, Folder.trash_operation_id: None}, synchronize_session=False
+    )
+    db.query(Asset).filter(Asset.trash_operation_id == operation.id, Asset.deleted_at.isnot(None)).update(
+        {Asset.deleted_at: None, Asset.trash_operation_id: None}, synchronize_session=False
+    )
+
+
+@router.get("/trash", response_model=dict)
+def list_unified_trash(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    operations = db.query(TrashOperation).filter(
+        TrashOperation.restored_at.is_(None),
+    ).order_by(TrashOperation.deleted_at.desc()).all()
+    visible_operations = []
+    for operation in operations:
+        try:
+            _require_trash_authority(db, operation, current_user)
+        except HTTPException:
+            continue
+        if _trash_item_name(db, operation) is not None:
+            visible_operations.append(operation)
+    operations = visible_operations[skip:skip + limit]
+    retention_days = settings.soft_delete_retention_days
+    return {
+        "items": [
+            {
+                "operation_id": str(operation.id),
+                "id": str(operation.entity_id),
+                "type": _operation_type(operation).value,
+                "name": _trash_item_name(db, operation),
+                "deleted_at": operation.deleted_at.isoformat(),
+                "expires_at": (operation.deleted_at + timedelta(days=retention_days)).isoformat() if retention_days > 0 else None,
+            }
+            for operation in operations
+        ],
+        "retention_days": retention_days,
+    }
+
+
+@router.post("/trash/{operation_id}/restore", response_model=dict)
+def restore_unified_trash_item(
+    operation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from ..tasks.cleanup_tasks import _PURGE_ADVISORY_LOCK_KEY
+    if not db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _PURGE_ADVISORY_LOCK_KEY}).scalar():
+        raise HTTPException(status_code=409, detail="Trash cleanup is already running; try again shortly")
+    workspace = _lock_workspace(db)
+    operation = _trash_operation(db, operation_id, current_user)
+    if operation.workspace_id and operation.workspace_id != workspace.id:
+        raise HTTPException(status_code=404, detail="Deleted item not found")
+    if _operation_type(operation) == TrashEntityType.project_folder:
+        _restore_project_folder_operation(db, operation)
+    elif _operation_type(operation) == TrashEntityType.folder:
+        _restore_media_folder_operation(db, operation)
+    elif _operation_type(operation) == TrashEntityType.asset:
+        project = db.query(Project).filter(Project.id == operation.project_id, Project.deleted_at.is_(None)).with_for_update().first()
+        if not project:
+            raise HTTPException(status_code=409, detail="Cannot restore: the project is still deleted")
+        asset = db.query(Asset).filter(Asset.id == operation.entity_id, Asset.trash_operation_id == operation.id, Asset.deleted_at.isnot(None)).with_for_update().first()
+        if not asset:
+            raise HTTPException(status_code=409, detail="Deleted asset is no longer recoverable")
+        if asset.folder_id and not db.query(Folder.id).filter(Folder.id == asset.folder_id, Folder.deleted_at.is_(None)).first():
+            asset.folder_id = None
+        asset.deleted_at = None
+        asset.trash_operation_id = None
+    elif _operation_type(operation) == TrashEntityType.project:
+        project = db.query(Project).filter(Project.id == operation.entity_id, Project.trash_operation_id == operation.id, Project.deleted_at.isnot(None)).with_for_update().first()
+        if not project:
+            raise HTTPException(status_code=409, detail="Deleted project is no longer recoverable")
+        if project.project_folder_id and not _get_folder_or_none(db, project.project_folder_id):
+            project.project_folder_id = None
+        project.deleted_at = None
+        project.trash_operation_id = None
+    operation.restored_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/trash/{operation_id}", response_model=dict)
+def empty_unified_trash_item(
+    operation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently remove one owner-owned Trash root and its operation-scoped descendants."""
+    from ..tasks.cleanup_tasks import (
+        PurgeCounts,
+        _PURGE_ADVISORY_LOCK_KEY,
+        _purge_asset,
+        _purge_folder,
+        _purge_project,
+        _purge_project_folder,
+        _close_trash_operations,
+    )
+
+    got_lock = db.execute(text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": _PURGE_ADVISORY_LOCK_KEY}).scalar()
+    if not got_lock:
+        raise HTTPException(status_code=409, detail="Trash cleanup is already running; try again shortly")
+    operation = _trash_operation(db, operation_id, current_user)
+    counts = PurgeCounts()
+    root = {
+        TrashEntityType.asset: Asset,
+        TrashEntityType.folder: Folder,
+        TrashEntityType.project: Project,
+        TrashEntityType.project_folder: ProjectFolder,
+    }[_operation_type(operation)]
+    item = db.query(root).filter(
+        root.id == operation.entity_id,
+        root.trash_operation_id == operation.id,
+        root.deleted_at.isnot(None),
+    ).with_for_update().first()
+    if not item:
+        raise HTTPException(status_code=409, detail="Deleted item is no longer recoverable")
+    {
+        TrashEntityType.asset: _purge_asset,
+        TrashEntityType.folder: _purge_folder,
+        TrashEntityType.project: _purge_project,
+        TrashEntityType.project_folder: _purge_project_folder,
+    }[_operation_type(operation)](db, item.id, counts)
+    _close_trash_operations(db, _operation_type(operation).value, item.id)
+    db.delete(operation)
+    db.commit()
+    from ..tasks.celery_app import send_task_safe
+    from ..tasks.cleanup_tasks import purge_trash_storage
+    send_task_safe(purge_trash_storage)
+    return {"ok": True}
 
 
 @router.get("/workspace", response_model=WorkspaceResponse)
@@ -349,10 +614,18 @@ def delete_project_folder(folder_id: uuid.UUID, db: Session = Depends(get_db), c
         raise HTTPException(status_code=403, detail="Only the folder owner can delete a folder")
     folder_ids = _descendant_ids(db, folder.id)
     now = datetime.now(timezone.utc)
-    db.query(Project).filter(Project.project_folder_id.in_(folder_ids), Project.deleted_at.is_(None)).update({Project.project_folder_id: None}, synchronize_session=False)
-    db.query(PersonalProjectPlacement).filter(PersonalProjectPlacement.folder_id.in_(folder_ids), PersonalProjectPlacement.deleted_at.is_(None)).update({PersonalProjectPlacement.deleted_at: now}, synchronize_session=False)
-    db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id.in_(folder_ids), ProjectFolderShare.deleted_at.is_(None)).update({ProjectFolderShare.deleted_at: now}, synchronize_session=False)
-    db.query(ProjectFolder).filter(ProjectFolder.id.in_(folder_ids), ProjectFolder.deleted_at.is_(None)).update({ProjectFolder.deleted_at: now}, synchronize_session=False)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.project_folder,
+        entity_id=folder.id,
+        deleted_by_id=current_user.id,
+        workspace_id=folder.workspace_id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    db.query(PersonalProjectPlacement).filter(PersonalProjectPlacement.folder_id.in_(folder_ids), PersonalProjectPlacement.deleted_at.is_(None)).update({PersonalProjectPlacement.deleted_at: now, PersonalProjectPlacement.trash_operation_id: operation.id}, synchronize_session=False)
+    db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id.in_(folder_ids), ProjectFolderShare.deleted_at.is_(None)).update({ProjectFolderShare.deleted_at: now, ProjectFolderShare.trash_operation_id: operation.id}, synchronize_session=False)
+    db.query(ProjectFolder).filter(ProjectFolder.id.in_(folder_ids), ProjectFolder.deleted_at.is_(None)).update({ProjectFolder.deleted_at: now, ProjectFolder.trash_operation_id: operation.id}, synchronize_session=False)
     db.commit()
 
 
@@ -421,11 +694,19 @@ def set_personal_placement(project_id: uuid.UUID, body: PersonalProjectPlacement
         raise HTTPException(status_code=404, detail="Project not found")
     if not get_effective_project_role(db, project.id, current_user):
         raise HTTPException(status_code=403, detail="Project access required")
+    # Any newer placement decision supersedes a placement that was hidden when
+    # its parent folder entered Trash, even if that newer placement is later removed.
+    db.query(PersonalProjectPlacement).filter(
+        PersonalProjectPlacement.user_id == current_user.id,
+        PersonalProjectPlacement.project_id == project.id,
+        PersonalProjectPlacement.deleted_at.isnot(None),
+        PersonalProjectPlacement.trash_operation_id.isnot(None),
+    ).update({PersonalProjectPlacement.restore_eligible: False}, synchronize_session=False)
     existing = db.query(PersonalProjectPlacement).filter(PersonalProjectPlacement.user_id == current_user.id, PersonalProjectPlacement.project_id == project.id, PersonalProjectPlacement.deleted_at.is_(None)).first()
     if body.folder_id is None:
         if existing:
             existing.deleted_at = datetime.now(timezone.utc)
-            db.commit()
+        db.commit()
         return None
     folder = _get_folder(db, body.folder_id)
     if folder.scope != ProjectFolderScope.personal or folder.owner_id != current_user.id:

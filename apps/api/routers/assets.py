@@ -10,6 +10,7 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.trash import TrashEntityType, TrashOperation
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse
@@ -247,7 +248,25 @@ def delete_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
-    asset.deleted_at = datetime.now(timezone.utc)
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == asset.project_id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="Project has no active owner")
+    now = datetime.now(timezone.utc)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.asset,
+        entity_id=asset.id,
+        deleted_by_id=current_user.id,
+        project_id=asset.project_id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    asset.deleted_at = now
+    asset.trash_operation_id = operation.id
     db.commit()
 
 

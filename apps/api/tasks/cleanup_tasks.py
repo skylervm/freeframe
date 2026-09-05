@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import text, func
 
-from .celery_app import celery_app
+from .celery_app import celery_app, send_task_safe
 from ..database import SessionLocal
 from ..config import settings
 from ..models.asset import (
@@ -15,6 +15,9 @@ from ..models.approval import Approval
 from ..models.share import ShareLink, ShareLinkItem, ShareLinkActivity, AssetShare
 from ..models.project import Project, ProjectMember
 from ..models.folder import Folder
+from ..models.project_folder import ProjectFolder, ProjectFolderShare, PersonalProjectPlacement
+from ..models.trash import TrashOperation
+from ..models.trash import TrashStorageDeletion
 from ..models.metadata import MetadataField, AssetMetadata, Collection, CollectionShare
 from ..models.branding import ProjectBranding, WatermarkSettings
 from ..models.activity import Mention, ActivityLog, Notification
@@ -51,6 +54,7 @@ class PurgeCounts:
     """Accumulates what a purge run reclaimed. `retention_days` is filled by `_run_cleanup`."""
     retention_days: int = 0
     projects: int = 0
+    project_folders: int = 0
     folders: int = 0
     assets: int = 0
     versions: int = 0
@@ -59,6 +63,11 @@ class PurgeCounts:
     share_links: int = 0
     share_links_expired: int = 0
     s3_deletes: int = 0
+
+
+def _queue_storage_delete(db, s3_key: str | None, *, is_prefix: bool = False) -> None:
+    if s3_key:
+        db.add(TrashStorageDeletion(s3_key=s3_key, is_prefix=is_prefix))
 
 
 def _purge_comment(db, comment_id, counts: PurgeCounts) -> None:
@@ -70,7 +79,7 @@ def _purge_comment(db, comment_id, counts: PurgeCounts) -> None:
     for reply in db.query(Comment).filter(Comment.parent_id == comment_id).all():
         _purge_comment(db, reply.id, counts)
     for att in db.query(CommentAttachment).filter(CommentAttachment.comment_id == comment_id).all():
-        _safe(delete_object, att.s3_key)
+        _queue_storage_delete(db, att.s3_key)
         counts.s3_deletes += 1
     db.query(CommentAttachment).filter(CommentAttachment.comment_id == comment_id).delete(synchronize_session=False)
     db.query(Annotation).filter(Annotation.comment_id == comment_id).delete(synchronize_session=False)
@@ -82,15 +91,15 @@ def _purge_comment(db, comment_id, counts: PurgeCounts) -> None:
     db.flush()
 
 
-def _reclaim_media_s3(mf, counts: PurgeCounts) -> None:
-    """Best-effort delete of a MediaFile's S3 objects. processed is a prefix (HLS or single key)."""
-    _safe(delete_object, mf.s3_key_raw)
+def _reclaim_media_s3(db, mf, counts: PurgeCounts) -> None:
+    """Queue a MediaFile's object storage cleanup after the database commits."""
+    _queue_storage_delete(db, mf.s3_key_raw)
     counts.s3_deletes += 1
     if mf.s3_key_processed:
-        _safe(delete_prefix, mf.s3_key_processed)
+        _queue_storage_delete(db, mf.s3_key_processed, is_prefix=True)
         counts.s3_deletes += 1
     if mf.s3_key_thumbnail:
-        _safe(delete_object, mf.s3_key_thumbnail)
+        _queue_storage_delete(db, mf.s3_key_thumbnail)
         counts.s3_deletes += 1
 
 
@@ -103,7 +112,7 @@ def _purge_version(db, version_id, counts: PurgeCounts) -> None:
     db.query(CarouselItem).filter(CarouselItem.version_id == version_id).delete(synchronize_session=False)
     media = db.query(MediaFile).filter(MediaFile.version_id == version_id).all()
     for mf in media:
-        _reclaim_media_s3(mf, counts)
+        _reclaim_media_s3(db, mf, counts)
     counts.media_files += len(media)
     db.query(MediaFile).filter(MediaFile.version_id == version_id).delete(synchronize_session=False)
     # comments on this version (recurse each; every comment has a version_id, NOT NULL)
@@ -159,22 +168,34 @@ def _purge_folder(db, folder_id, counts: PurgeCounts) -> None:
     f = db.query(Folder).filter(Folder.id == folder_id).first()
     if f is None:
         return
+    operation_id = f.trash_operation_id
     child_ids = [c.id for c in db.query(Folder.id).filter(Folder.parent_id == folder_id).all()]
     for cid in child_ids:
         # re-check under lock: skip a child folder reparented out (e.g. restored to root) since the scan
-        if db.query(Folder).filter(Folder.id == cid, Folder.parent_id == folder_id).with_for_update().first() is None:
+        child = db.query(Folder).filter(Folder.id == cid, Folder.parent_id == folder_id).with_for_update().first()
+        if child is None:
+            continue
+        if operation_id and child.trash_operation_id != operation_id:
+            child.parent_id = None
             continue
         _purge_folder(db, cid, counts)
     asset_ids = [a.id for a in db.query(Asset.id).filter(Asset.folder_id == folder_id).all()]
     for aid in asset_ids:
         # re-check under lock: skip an asset reparented out (restored to root) since the scan
-        if db.query(Asset).filter(Asset.id == aid, Asset.folder_id == folder_id).with_for_update().first() is None:
+        asset = db.query(Asset).filter(Asset.id == aid, Asset.folder_id == folder_id).with_for_update().first()
+        if asset is None:
+            continue
+        if operation_id and asset.trash_operation_id != operation_id:
+            asset.folder_id = None
             continue
         _purge_asset(db, aid, counts)
     for link in db.query(ShareLink).filter(ShareLink.folder_id == folder_id).all():
         _purge_share_link(db, link.id, counts)
     db.query(ShareLinkItem).filter(ShareLinkItem.folder_id == folder_id).delete(synchronize_session=False)
     db.query(AssetShare).filter(AssetShare.folder_id == folder_id).delete(synchronize_session=False)
+    # Reparented descendants above must reach the database before this bulk
+    # delete, because the production session intentionally has autoflush off.
+    db.flush()
     db.query(Folder).filter(Folder.id == folder_id).delete(synchronize_session=False)
     counts.folders += 1
     db.flush()
@@ -206,7 +227,7 @@ def _purge_project(db, project_id, counts: PurgeCounts) -> None:
     branding = db.query(ProjectBranding).filter(ProjectBranding.project_id == project_id).first()
     if branding is not None:
         if branding.logo_s3_key:
-            _safe(delete_object, branding.logo_s3_key)
+            _queue_storage_delete(db, branding.logo_s3_key)
             counts.s3_deletes += 1
         db.query(ProjectBranding).filter(ProjectBranding.project_id == project_id).delete(synchronize_session=False)
     db.query(WatermarkSettings).filter(WatermarkSettings.project_id == project_id).delete(synchronize_session=False)
@@ -220,10 +241,44 @@ def _purge_project(db, project_id, counts: PurgeCounts) -> None:
     db.query(PersonalProjectPlacement).filter(PersonalProjectPlacement.project_id == project_id).delete(synchronize_session=False)
     db.query(ActivityLog).filter(ActivityLog.project_id == project_id).delete(synchronize_session=False)
     if p.poster_s3_key:
-        _safe(delete_object, p.poster_s3_key)
+        _queue_storage_delete(db, p.poster_s3_key)
         counts.s3_deletes += 1
     db.query(Project).filter(Project.id == project_id).delete(synchronize_session=False)
     counts.projects += 1
+    db.flush()
+
+
+def _purge_project_folder(db, folder_id, counts: PurgeCounts) -> None:
+    """Hard-delete a deleted project-folder subtree without deleting its projects."""
+    folder = db.query(ProjectFolder).filter(ProjectFolder.id == folder_id).first()
+    if folder is None:
+        return
+    operation_id = folder.trash_operation_id
+    child_ids = [child_id for (child_id,) in db.query(ProjectFolder.id).filter(
+        ProjectFolder.parent_id == folder_id,
+        ProjectFolder.deleted_at.isnot(None),
+    ).all()]
+    for child_id in child_ids:
+        locked_child = db.query(ProjectFolder).filter(
+            ProjectFolder.id == child_id,
+            ProjectFolder.parent_id == folder_id,
+            ProjectFolder.deleted_at.isnot(None),
+        ).with_for_update().first()
+        if locked_child:
+            if operation_id and locked_child.trash_operation_id != operation_id:
+                locked_child.parent_id = None
+                if locked_child.scope.value == "workspace":
+                    locked_child.is_private = True
+                continue
+            _purge_project_folder(db, child_id, counts)
+    db.query(Project).filter(Project.project_folder_id == folder_id).update(
+        {Project.project_folder_id: None}, synchronize_session=False
+    )
+    db.query(PersonalProjectPlacement).filter(PersonalProjectPlacement.folder_id == folder_id).delete(synchronize_session=False)
+    db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id == folder_id).delete(synchronize_session=False)
+    db.flush()
+    db.query(ProjectFolder).filter(ProjectFolder.id == folder_id).delete(synchronize_session=False)
+    counts.project_folders += 1
     db.flush()
 
 
@@ -363,6 +418,15 @@ def _lock_if_still_purgeable(db, model, obj_id, cutoff):
     ).with_for_update().first()
 
 
+def _close_trash_operations(db, entity_type: str, entity_id) -> None:
+    """Keep permanently purged roots out of the recoverable Trash listing."""
+    db.query(TrashOperation).filter(
+        TrashOperation.entity_type == entity_type,
+        TrashOperation.entity_id == entity_id,
+        TrashOperation.restored_at.is_(None),
+    ).update({TrashOperation.restored_at: datetime.now(timezone.utc)}, synchronize_session=False)
+
+
 def _purge_soft_deleted(db, counts: PurgeCounts) -> None:
     """Hard-delete every root soft-deleted longer than the retention window, cascading its subtree.
     Roots are processed top-down so a parent removes its children before a later pass queries them;
@@ -377,13 +441,14 @@ def _purge_soft_deleted(db, counts: PurgeCounts) -> None:
         return
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
-    for model, purge in (
-        (Project, _purge_project),
-        (Folder, _purge_folder),
-        (Asset, _purge_asset),
-        (AssetVersion, _purge_version),
-        (Comment, _purge_comment),
-        (ShareLink, _purge_share_link),
+    for model, entity_type, purge in (
+        (ProjectFolder, "project_folder", _purge_project_folder),
+        (Project, "project", _purge_project),
+        (Folder, "folder", _purge_folder),
+        (Asset, "asset", _purge_asset),
+        (AssetVersion, None, _purge_version),
+        (Comment, None, _purge_comment),
+        (ShareLink, None, _purge_share_link),
     ):
         ids = [r.id for r in db.query(model.id).filter(
             model.deleted_at.isnot(None), model.deleted_at < cutoff,
@@ -392,6 +457,8 @@ def _purge_soft_deleted(db, counts: PurgeCounts) -> None:
             if _lock_if_still_purgeable(db, model, obj_id, cutoff) is None:
                 continue  # restored or already removed since the scan
             purge(db, obj_id, counts)
+            if entity_type:
+                _close_trash_operations(db, entity_type, obj_id)
 
     db.query(Approval).filter(Approval.deleted_at.isnot(None), Approval.deleted_at < cutoff).delete(synchronize_session=False)
     db.query(AssetShare).filter(AssetShare.deleted_at.isnot(None), AssetShare.deleted_at < cutoff).delete(synchronize_session=False)
@@ -435,8 +502,37 @@ def cleanup_soft_deleted():
     try:
         counts = _run_cleanup(db)
         db.commit()
+        send_task_safe(purge_trash_storage)
         log.info("cleanup: %s", asdict(counts))
         return asdict(counts)
+    finally:
+        db.close()
+
+
+@celery_app.task(name="purge_trash_storage")
+def purge_trash_storage():
+    """Drain durable post-commit storage cleanup work; failed records retry later."""
+    db = SessionLocal()
+    try:
+        records = db.query(TrashStorageDeletion).filter(
+            TrashStorageDeletion.completed_at.is_(None),
+            TrashStorageDeletion.next_attempt_at <= datetime.now(timezone.utc),
+        ).order_by(TrashStorageDeletion.next_attempt_at, TrashStorageDeletion.created_at).limit(100).all()
+        for record in records:
+            try:
+                if record.is_prefix:
+                    delete_prefix(record.s3_key)
+                else:
+                    delete_object(record.s3_key)
+                record.completed_at = datetime.now(timezone.utc)
+            except Exception as exc:  # noqa: BLE001 - retained for retry
+                record.attempts += 1
+                backoff_seconds = min(2 ** min(record.attempts, 10), 3600)
+                record.next_attempt_at = datetime.now(timezone.utc) + timedelta(seconds=backoff_seconds)
+                log.warning("trash storage cleanup failed for queued item %s: %s", record.id, exc)
+        db.commit()
+        if len(records) == 100:
+            send_task_safe(purge_trash_storage)
     finally:
         db.close()
 

@@ -30,6 +30,7 @@ class ProjectFolder(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trash_operation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("trash_operations.id"), nullable=True, index=True)
 
     __table_args__ = (
         Index("uq_project_folder_name_per_parent", "workspace_id", "parent_id", "owner_id", "name", unique=True, postgresql_where=(deleted_at.is_(None))),
@@ -47,6 +48,7 @@ class ProjectFolderShare(Base):
     shared_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trash_operation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("trash_operations.id"), nullable=True, index=True)
 
     __table_args__ = (
         Index("uq_project_folder_share_active", "folder_id", "user_id", unique=True, postgresql_where=(deleted_at.is_(None))),
@@ -62,6 +64,8 @@ class PersonalProjectPlacement(Base):
     folder_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("project_folders.id"), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trash_operation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("trash_operations.id"), nullable=True, index=True)
+    restore_eligible: Mapped[bool] = mapped_column(default=True, nullable=False)
 
     __table_args__ = (
         Index("uq_personal_project_placement_active", "user_id", "project_id", unique=True, postgresql_where=(deleted_at.is_(None))),
