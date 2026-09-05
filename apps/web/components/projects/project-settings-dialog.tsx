@@ -32,7 +32,8 @@ export function ProjectSettingsDialog({
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Sync state when project changes
+  // A parent refresh creates a new project object. Keep unsaved edits until the
+  // dialog is closed or the user switches projects.
   React.useEffect(() => {
     setName(project.name)
     setDescription(project.description || '')
@@ -40,7 +41,7 @@ export function ProjectSettingsDialog({
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
     setSaveError(null)
-  }, [project])
+  }, [project.id, open])
 
   const handlePosterSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
