@@ -9,7 +9,11 @@ from apps.api.models.trash import TrashEntityType, TrashOperation
 from apps.api.models.user import User
 from apps.api.models.workspace import Workspace
 from apps.api.routers.folders import delete_folder, restore_asset
-from apps.api.routers.project_folders import delete_project_folder, restore_unified_trash_item
+from apps.api.routers.project_folders import (
+    delete_project_folder,
+    list_unified_trash,
+    restore_unified_trash_item,
+)
 
 
 def _user(db) -> User:
@@ -97,3 +101,43 @@ def test_project_folder_restore_preserves_project_placement_and_share(real_db):
     assert folder.deleted_at is None
     assert share.deleted_at is None
     assert project.project_folder_id == folder.id
+
+
+def test_trash_listing_paginates_only_operations_owned_by_current_user(real_db):
+    owner = _user(real_db)
+    other_owner = _user(real_db)
+    owner_project = _project(real_db, owner)
+    other_project = _project(real_db, other_owner)
+
+    owner_assets = [
+        Asset(project_id=owner_project.id, name=f"owner-{index}", asset_type=AssetType.video, created_by=owner.id)
+        for index in range(2)
+    ]
+    other_assets = [
+        Asset(project_id=other_project.id, name=f"other-{index}", asset_type=AssetType.video, created_by=other_owner.id)
+        for index in range(3)
+    ]
+    real_db.add_all(owner_assets + other_assets)
+    real_db.flush()
+    operations = [
+        TrashOperation(
+            entity_type=TrashEntityType.asset,
+            entity_id=asset.id,
+            deleted_by_id=asset.created_by,
+            project_id=asset.project_id,
+        )
+        for asset in owner_assets + other_assets
+    ]
+    real_db.add_all(operations)
+    real_db.flush()
+    for asset, operation in zip(owner_assets + other_assets, operations):
+        asset.deleted_at = operation.deleted_at
+        asset.trash_operation_id = operation.id
+    real_db.flush()
+
+    first_page = list_unified_trash(skip=0, limit=1, db=real_db, current_user=owner)
+    second_page = list_unified_trash(skip=1, limit=1, db=real_db, current_user=owner)
+    third_page = list_unified_trash(skip=2, limit=1, db=real_db, current_user=owner)
+
+    assert {item["name"] for item in first_page["items"] + second_page["items"]} == {"owner-0", "owner-1"}
+    assert third_page["items"] == []

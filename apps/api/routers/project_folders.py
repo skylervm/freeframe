@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import text
+from sqlalchemy import and_, exists, or_, text
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -318,18 +318,27 @@ def list_unified_trash(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    project_owner = exists().where(
+        ProjectMember.project_id == TrashOperation.project_id,
+        ProjectMember.user_id == current_user.id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    )
+    folder_owner = exists().where(
+        ProjectFolder.id == TrashOperation.entity_id,
+        ProjectFolder.owner_id == current_user.id,
+    )
     operations = db.query(TrashOperation).filter(
         TrashOperation.restored_at.is_(None),
-    ).order_by(TrashOperation.deleted_at.desc()).all()
-    visible_operations = []
-    for operation in operations:
-        try:
-            _require_trash_authority(db, operation, current_user)
-        except HTTPException:
-            continue
-        if _trash_item_name(db, operation) is not None:
-            visible_operations.append(operation)
-    operations = visible_operations[skip:skip + limit]
+        or_(
+            and_(TrashOperation.project_id.isnot(None), project_owner),
+            and_(
+                TrashOperation.project_id.is_(None),
+                TrashOperation.entity_type == TrashEntityType.project_folder.value,
+                folder_owner,
+            ),
+        ),
+    ).order_by(TrashOperation.deleted_at.desc(), TrashOperation.id.desc()).offset(skip).limit(limit).all()
     retention_days = settings.soft_delete_retention_days
     return {
         "items": [
