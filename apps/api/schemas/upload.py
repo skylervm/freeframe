@@ -48,7 +48,7 @@ class InitiateUploadRequest(BaseModel):
     asset_name: str
     original_filename: str
     mime_type: str
-    file_size_bytes: int
+    file_size_bytes: int = Field(gt=0)
     content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     # For new version of existing asset
     asset_id: uuid.UUID | None = None
@@ -64,6 +64,9 @@ class PresignPartRequest(BaseModel):
     s3_key: str
     upload_id: str
     part_number: int  # 1-indexed
+    # Optional during rollout so cached browser clients can continue uploading.
+    # The server derives and signs the authoritative byte count from the version.
+    content_length: int | None = Field(default=None, gt=0)
 
 class PresignPartResponse(BaseModel):
     presigned_url: str

@@ -1,5 +1,5 @@
 from .user import User, GuestUser
-from .project import Project, ProjectMember
+from .project import Project, ProjectMember, AutomationBootstrapRequest, AutomationBootstrapRenewal
 from .folder import Folder
 from .asset import Asset, AssetVersion, MediaFile, CarouselItem, ProcessingOutbox
 from .comment import Comment, Annotation, CommentAttachment, CommentReaction

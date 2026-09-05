@@ -260,6 +260,13 @@ All environment variables are documented in [`.env.example`](../.env.example). K
 | `S3_ENDPOINT` | Custom S3 endpoint (non-AWS) | (empty = AWS) |
 | `JWT_SECRET` | Auth token signing key | (required, generate with `openssl rand -hex 64`) |
 | `FRONTEND_URL` | Your FreeFrame URL (with https://) | (required) |
+| `AUTOMATION_BOOTSTRAP_TOKEN_SHA256` | SHA-256 hash for the optional terminal-only project bootstrap credential | (disabled when blank) |
+| `AUTOMATION_BOOTSTRAP_OWNER_ID` | Existing active owner user UUID used only for bootstrap-created private projects | (required when bootstrap is enabled) |
+| `AUTOMATION_BOOTSTRAP_TOKEN_LIFETIME_HOURS` | Lifetime of the one project-scoped token | `72` |
+| `AUTOMATION_BOOTSTRAP_MAX_PROJECTS_PER_DAY` | Durable ceiling on created projects per owner | `3` |
+| `AUTOMATION_BOOTSTRAP_MAX_RENEWALS_PER_DAY` | Durable ceiling on token renewals per project | `3` |
+| `AUTOMATION_BOOTSTRAP_MAX_FILE_BYTES` | Maximum size of one bootstrap-token upload | `21474836480` |
+| `AUTOMATION_BOOTSTRAP_MAX_TOTAL_UPLOAD_BYTES` | Total reserved upload capacity for one bootstrap token | `107374182400` |
 | `DOMAIN` | Your domain for auto SSL | (optional) |
 | `ACME_EMAIL` | Email for Let's Encrypt notifications | (optional) |
 | `MAIL_PROVIDER` | `smtp` or `ses` | `smtp` |

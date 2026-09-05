@@ -257,6 +257,9 @@ export function VideoPlayer({
         return;
       }
 
+      // FreeFrame assumes 24fps throughout (see formatTimecode / formatFrames in lib/utils).
+      const frameStep = 1 / 24;
+
       switch (e.code) {
         case "Space":
           e.preventDefault();
@@ -264,11 +267,11 @@ export function VideoPlayer({
           break;
         case "ArrowLeft":
           e.preventDefault();
-          seek(currentTime - 5);
+          seek(currentTime - (e.shiftKey ? (e.metaKey ? 5 : 1) : frameStep));
           break;
         case "ArrowRight":
           e.preventDefault();
-          seek(currentTime + 5);
+          seek(currentTime + (e.shiftKey ? (e.metaKey ? 5 : 1) : frameStep));
           break;
         case "KeyJ":
           seek(currentTime - 10);

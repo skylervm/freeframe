@@ -29,6 +29,7 @@ from ..schemas.upload import (
 from ..services.storage import upload_guard_error
 
 logger = logging.getLogger(__name__)
+_MULTIPART_CHUNK_BYTES = 10 * 1024 * 1024
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
@@ -85,6 +86,15 @@ def _initiate_upload(
         )
         db.add(asset)
         db.flush()
+
+    # Serialize version allocation for an existing asset. Without this lock,
+    # two different idempotency keys can both select the same next number.
+    locked_asset = db.query(Asset).populate_existing().with_for_update().filter(
+        Asset.id == asset.id,
+        Asset.deleted_at.is_(None),
+    ).first()
+    if not locked_asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
 
     # Get next version number
     last_version = db.query(AssetVersion).filter(
@@ -148,6 +158,15 @@ def initiate_upload(
     return _initiate_upload(body, db, current_user)
 
 
+def _expected_part_length(file_size_bytes: int, part_number: int) -> int | None:
+    max_parts = (file_size_bytes + _MULTIPART_CHUNK_BYTES - 1) // _MULTIPART_CHUNK_BYTES
+    if part_number < 1 or part_number > max_parts:
+        return None
+    if part_number < max_parts:
+        return _MULTIPART_CHUNK_BYTES
+    return file_size_bytes - _MULTIPART_CHUNK_BYTES * (max_parts - 1)
+
+
 @router.post("/presign-part", response_model=PresignPartResponse)
 def presign_part(
     body: PresignPartRequest,
@@ -179,7 +198,11 @@ def presign_part(
     if version.upload_id is not None and version.upload_id != body.upload_id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
 
-    url = presign_upload_part(body.s3_key, body.upload_id, body.part_number)
+    expected_length = _expected_part_length(media_file.file_size_bytes, body.part_number)
+    if expected_length is None or (body.content_length is not None and body.content_length != expected_length):
+        raise HTTPException(status_code=400, detail="Part length does not match the declared upload size")
+
+    url = presign_upload_part(body.s3_key, body.upload_id, body.part_number, expected_length)
 
     # Proof of life for the reaper: an upload slower than its window is still
     # making progress and must not be aborted underneath the user.

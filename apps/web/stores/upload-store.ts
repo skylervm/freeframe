@@ -63,6 +63,7 @@ async function uploadPartOnce(
     s3_key: s3Key,
     upload_id: uploadId,
     part_number: partNumber,
+    content_length: chunk.size,
   })
 
   const putResponse = await fetch(presigned_url, {

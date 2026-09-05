@@ -1,22 +1,159 @@
 """Route-level boundaries for the project-scoped automation API."""
 import inspect
 import uuid
+import hashlib
 from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 from fastapi import HTTPException
 
 from apps.api.middleware.automation_auth import AutomationActor, get_automation_actor
+from apps.api.middleware.bootstrap_auth import BootstrapActor, get_bootstrap_actor
 from apps.api.models.asset import ProcessingStatus
 from apps.api.routers import automation as automation_module
 from apps.api.routers import upload as upload_module
 from apps.api.schemas.automation_token import AutomationTokenCreate
+from apps.api.schemas.bootstrap import BootstrapProjectCreate
 
 
 def _actor():
     user = MagicMock()
     user.id = uuid.uuid4()
     return AutomationActor(token_id=uuid.uuid4(), project_id=uuid.uuid4(), user=user)
+
+
+def _bootstrap_actor():
+    user = MagicMock()
+    user.id = uuid.uuid4()
+    return BootstrapActor(user=user)
+
+
+def test_bootstrap_auth_fails_closed_without_configuration(monkeypatch, mock_db):
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_token_sha256", None)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_owner_id", None)
+
+    with pytest.raises(HTTPException) as error:
+        get_bootstrap_actor("x" * 48, mock_db)
+
+    assert error.value.status_code == 401
+
+
+def test_bootstrap_replay_returns_the_same_project_and_token(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    body = BootstrapProjectCreate(name="Program Radio EP3", token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    request_id = uuid.uuid4()
+    existing = MagicMock(request_fingerprint=automation_module._bootstrap_fingerprint(body))
+    project = MagicMock(id=uuid.uuid4())
+    project.name = body.name
+    token = MagicMock(id=body.token_id, expires_at="2026-09-07T00:00:00Z")
+    mock_db.first.side_effect = [existing, project, token]
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_projects_per_day", 3)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_token_lifetime_hours", 72)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_file_bytes", 10)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_total_upload_bytes", 20)
+
+    response = automation_module.bootstrap_project(body, request_id, mock_db, actor)
+
+    assert response.project_id == project.id
+    assert response.token_id == token.id
+    assert not mock_db.commit.called
+
+
+def test_bootstrap_rejects_conflicting_idempotency_reuse(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    body = BootstrapProjectCreate(name="Program Radio EP3", token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    mock_db.first.return_value = MagicMock(request_fingerprint="different")
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_projects_per_day", 3)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_token_lifetime_hours", 72)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_file_bytes", 10)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_total_upload_bytes", 20)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.bootstrap_project(body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 409
+
+
+def test_bootstrap_quota_reservation_rejects_overages():
+    actor = _actor()
+    token = MagicMock(max_file_bytes=10, max_total_upload_bytes=20, reserved_upload_bytes=15)
+    db = MagicMock()
+    db.query.return_value = db
+    db.populate_existing.return_value = db
+    db.with_for_update.return_value = db
+    db.filter.return_value = db
+    db.first.return_value = token
+
+    with pytest.raises(HTTPException) as error:
+        automation_module._reserve_bootstrap_upload_bytes(db, actor, 6)
+
+    assert error.value.status_code == 413
+    assert token.reserved_upload_bytes == 15
+
+
+def test_bootstrap_quota_reservation_is_atomic_before_upload():
+    actor = _actor()
+    token = MagicMock(max_file_bytes=10, max_total_upload_bytes=20, reserved_upload_bytes=9)
+    db = MagicMock()
+    db.query.return_value = db
+    db.populate_existing.return_value = db
+    db.with_for_update.return_value = db
+    db.filter.return_value = db
+    db.first.return_value = token
+
+    automation_module._reserve_bootstrap_upload_bytes(db, actor, 10)
+
+    assert token.reserved_upload_bytes == 19
+    assert db.with_for_update.called
+
+
+def test_bootstrap_renewal_rejects_daily_limit(monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = automation_module.BootstrapTokenRenewal(token_secret_hash="a" * 64)
+    token = MagicMock(id=uuid.uuid4(), project_id=project_id, deleted_at=None)
+    project = MagicMock(id=project_id, deleted_at=None)
+    request = MagicMock(project_id=project_id, token_id=token.id, owner_id=actor.user.id)
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.populate_existing.return_value = db
+    db.with_for_update.return_value = db
+    db.first.side_effect = [None, request, token, project]
+    db.count.return_value = 3
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_renewals_per_day", 3)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.renew_bootstrap_token(project_id, body, uuid.uuid4(), db, actor)
+
+    assert error.value.status_code == 429
+
+
+def test_bootstrap_renewal_replay_rejects_a_stale_secret():
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = automation_module.BootstrapTokenRenewal(token_secret_hash="a" * 64)
+    prior = MagicMock(project_id=project_id, token_id=uuid.uuid4(), request_fingerprint=hashlib.sha256(f"{project_id}:{body.token_secret_hash}".encode()).hexdigest())
+    project = MagicMock(id=project_id)
+    token = MagicMock(secret_hash="b" * 64)
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.side_effect = [prior, project, token]
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.renew_bootstrap_token(project_id, body, uuid.uuid4(), db, actor)
+
+    assert error.value.status_code == 409
+
+
+def test_upload_part_lengths_are_bound_to_declared_upload_size():
+    chunk = upload_module._MULTIPART_CHUNK_BYTES
+    size = chunk + 17
+
+    assert upload_module._expected_part_length(size, 1) == chunk
+    assert upload_module._expected_part_length(size, 2) == 17
+    assert upload_module._expected_part_length(size, 3) is None
 
 
 def test_regular_upload_initiate_does_not_accept_automation_fields():

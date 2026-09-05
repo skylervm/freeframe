@@ -3,14 +3,23 @@ import uuid
 import re
 import hashlib
 import json
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
+from ..config import settings
 from ..database import get_db
 from ..middleware.automation_auth import AutomationActor, get_automation_actor
+from ..middleware.bootstrap_auth import BootstrapActor, get_bootstrap_actor
 from ..models.asset import Asset, AssetVersion, MediaFile
+from ..models.activity import ActivityLog
+from ..models.automation_token import ProjectAutomationToken
+from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRenewal, Project, ProjectMember, ProjectRole, ProjectType
+from ..models.user import User, UserStatus
+from ..schemas.bootstrap import BootstrapProjectCreate, BootstrapProjectResponse, BootstrapTokenRenewal
+from ..middleware.rate_limit import rate_limit
 from ..models.comment import Comment
 from ..schemas.upload import (
     AbortUploadRequest,
@@ -56,6 +65,145 @@ def _request_fingerprint(body: InitiateUploadRequest) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _bootstrap_fingerprint(body: BootstrapProjectCreate) -> str:
+    payload = {"name": body.name, "description": body.description, "token_id": str(body.token_id), "token_secret_hash": body.token_secret_hash}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _bootstrap_lock(db: Session, key: str) -> None:
+    lock_key = int.from_bytes(hashlib.sha256(f"bootstrap:{key}".encode()).digest()[:8], "big", signed=True)
+    db.execute(text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key})
+
+
+@router.post(
+    "/bootstrap/projects",
+    response_model=BootstrapProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit("automation_bootstrap_project", 3, 3600))],
+)
+def bootstrap_project(
+    body: BootstrapProjectCreate,
+    idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    actor: BootstrapActor = Depends(get_bootstrap_actor),
+):
+    """Create one private project and a bounded scoped token, or replay it safely."""
+    if settings.automation_bootstrap_max_projects_per_day < 1:
+        raise HTTPException(status_code=503, detail="Bootstrap automation is disabled")
+    if settings.automation_bootstrap_token_lifetime_hours < 1:
+        raise HTTPException(status_code=503, detail="Bootstrap token lifetime is invalid")
+    if settings.automation_bootstrap_max_file_bytes < 1 or settings.automation_bootstrap_max_total_upload_bytes < settings.automation_bootstrap_max_file_bytes:
+        raise HTTPException(status_code=503, detail="Bootstrap upload limits are invalid")
+
+    key = str(idempotency_key)
+    fingerprint = _bootstrap_fingerprint(body)
+    _bootstrap_lock(db, key)
+    existing = db.query(AutomationBootstrapRequest).filter(AutomationBootstrapRequest.idempotency_key == key).first()
+    if existing:
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency key cannot be reused for a different project")
+        project = db.query(Project).filter(Project.id == existing.project_id, Project.deleted_at.is_(None)).first()
+        token = db.query(ProjectAutomationToken).filter(ProjectAutomationToken.id == existing.token_id, ProjectAutomationToken.deleted_at.is_(None)).first()
+        if not project or not token:
+            raise HTTPException(status_code=409, detail="Previous bootstrap request is no longer usable")
+        return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=token.id, token_expires_at=token.expires_at)
+
+    # Locking the configured owner makes the durable daily ceiling safe even if Redis is unavailable.
+    owner = db.query(User).populate_existing().with_for_update().filter(
+        User.id == actor.user.id,
+        User.deleted_at.is_(None),
+        User.status == UserStatus.active,
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=401, detail="Invalid bootstrap credential")
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    created_today = db.query(AutomationBootstrapRequest).filter(
+        AutomationBootstrapRequest.owner_id == actor.user.id,
+        AutomationBootstrapRequest.created_at >= today,
+    ).count()
+    if created_today >= settings.automation_bootstrap_max_projects_per_day:
+        raise HTTPException(status_code=429, detail="Daily bootstrap project limit reached")
+
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.automation_bootstrap_token_lifetime_hours)
+    project = Project(name=body.name, description=body.description, project_type=ProjectType.personal, created_by=actor.user.id, is_public=False)
+    db.add(project)
+    db.flush()
+    db.add(ProjectMember(project_id=project.id, user_id=actor.user.id, role=ProjectRole.owner))
+    token = ProjectAutomationToken(
+        id=body.token_id,
+        project_id=project.id,
+        name="terminal bootstrap",
+        secret_hash=body.token_secret_hash,
+        created_by=actor.user.id,
+        expires_at=expires_at,
+        max_file_bytes=settings.automation_bootstrap_max_file_bytes,
+        max_total_upload_bytes=settings.automation_bootstrap_max_total_upload_bytes,
+    )
+    db.add(token)
+    db.add(AutomationBootstrapRequest(idempotency_key=key, request_fingerprint=fingerprint, project_id=project.id, token_id=token.id, owner_id=actor.user.id))
+    db.add(ActivityLog(project_id=project.id, user_id=actor.user.id, action="automation_bootstrap_project_created", payload={"request_id": key, "token_id": str(token.id)}))
+    db.commit()
+    return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=token.id, token_expires_at=expires_at)
+
+
+@router.post(
+    "/bootstrap/projects/{project_id}/token-renewals",
+    response_model=BootstrapProjectResponse,
+    dependencies=[Depends(rate_limit("automation_bootstrap_renewal", 3, 3600))],
+)
+def renew_bootstrap_token(
+    project_id: uuid.UUID,
+    body: BootstrapTokenRenewal,
+    idempotency_key: uuid.UUID = Header(alias="Idempotency-Key"),
+    db: Session = Depends(get_db),
+    actor: BootstrapActor = Depends(get_bootstrap_actor),
+):
+    key = str(idempotency_key)
+    fingerprint = hashlib.sha256(f"{project_id}:{body.token_secret_hash}".encode()).hexdigest()
+    _bootstrap_lock(db, key)
+    prior = db.query(AutomationBootstrapRenewal).filter(AutomationBootstrapRenewal.idempotency_key == key).first()
+    if prior:
+        if prior.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency key cannot be reused for a different renewal")
+        project = db.query(Project).filter(Project.id == prior.project_id, Project.deleted_at.is_(None)).first()
+        token = db.query(ProjectAutomationToken).filter(
+            ProjectAutomationToken.id == prior.token_id,
+            ProjectAutomationToken.project_id == prior.project_id,
+            ProjectAutomationToken.deleted_at.is_(None),
+            ProjectAutomationToken.revoked_at.is_(None),
+        ).first()
+        if not project or not token or token.secret_hash != body.token_secret_hash:
+            raise HTTPException(status_code=409, detail="Previous bootstrap renewal is no longer usable")
+        return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=prior.token_id, token_expires_at=prior.expires_at)
+    request = db.query(AutomationBootstrapRequest).filter(AutomationBootstrapRequest.project_id == project_id).first()
+    if not request or request.owner_id != actor.user.id:
+        raise HTTPException(status_code=404, detail="Bootstrap project not found")
+    token = db.query(ProjectAutomationToken).populate_existing().with_for_update().filter(
+        ProjectAutomationToken.id == request.token_id,
+        ProjectAutomationToken.project_id == project_id,
+        ProjectAutomationToken.deleted_at.is_(None),
+        ProjectAutomationToken.revoked_at.is_(None),
+    ).first()
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
+    if not token or not project:
+        raise HTTPException(status_code=404, detail="Bootstrap project not found")
+    if settings.automation_bootstrap_max_renewals_per_day < 1:
+        raise HTTPException(status_code=503, detail="Bootstrap token renewal is disabled")
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    renewed_today = db.query(AutomationBootstrapRenewal).filter(
+        AutomationBootstrapRenewal.project_id == project_id,
+        AutomationBootstrapRenewal.created_at >= today,
+    ).count()
+    if renewed_today >= settings.automation_bootstrap_max_renewals_per_day:
+        raise HTTPException(status_code=429, detail="Daily bootstrap token renewal limit reached")
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.automation_bootstrap_token_lifetime_hours)
+    token.secret_hash = body.token_secret_hash
+    token.expires_at = expires_at
+    db.add(AutomationBootstrapRenewal(idempotency_key=key, request_fingerprint=fingerprint, project_id=project_id, token_id=token.id, expires_at=expires_at))
+    db.commit()
+    return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=token.id, token_expires_at=expires_at)
+
+
 def _asset_in_scope(db: Session, asset_id: uuid.UUID, actor: AutomationActor) -> Asset:
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset or asset.project_id != actor.project_id:
@@ -78,6 +226,25 @@ def _validate_upload_key(db: Session, version: AssetVersion, s3_key: str) -> Non
     ).first()
     if not media_file:
         raise HTTPException(status_code=404, detail="Upload not found")
+
+
+def _reserve_bootstrap_upload_bytes(db: Session, actor: AutomationActor, requested_bytes: int) -> None:
+    """Atomically reserve quota for bounded tokens before S3 accepts bytes."""
+    token = db.query(ProjectAutomationToken).populate_existing().with_for_update().filter(
+        ProjectAutomationToken.id == actor.token_id,
+        ProjectAutomationToken.deleted_at.is_(None),
+    ).first()
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid automation token")
+    if token.max_file_bytes is None and token.max_total_upload_bytes is None:
+        return
+    if token.max_file_bytes is None or token.max_total_upload_bytes is None:
+        raise HTTPException(status_code=503, detail="Automation token limits are invalid")
+    if requested_bytes > token.max_file_bytes:
+        raise HTTPException(status_code=413, detail="File exceeds this token's upload limit")
+    if token.reserved_upload_bytes + requested_bytes > token.max_total_upload_bytes:
+        raise HTTPException(status_code=413, detail="This token's total upload limit has been reached")
+    token.reserved_upload_bytes += requested_bytes
 
 
 @router.post("/upload/initiate", response_model=InitiateUploadResponse)
@@ -111,6 +278,7 @@ def initiate_upload(
             asset_id=existing.asset_id,
             version_id=existing.id,
         )
+    _reserve_bootstrap_upload_bytes(db, actor, body.file_size_bytes)
     return upload._initiate_upload(
         body,
         db,

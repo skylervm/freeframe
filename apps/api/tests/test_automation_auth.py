@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from apps.api.middleware.automation_auth import get_automation_actor
 from apps.api.models.project import ProjectRole
+from apps.api.models.user import UserStatus
 
 
 def _token(token_id, secret):
@@ -30,7 +31,7 @@ def _db_for(token, user_deleted_at=None, member_role=ProjectRole.owner):
     project = MagicMock()
     user = MagicMock()
     user.deleted_at = user_deleted_at
-    user.status.value = "active"
+    user.status = UserStatus.active
     member = MagicMock()
     member.role = member_role
     db.first.side_effect = [token, project, user, member]

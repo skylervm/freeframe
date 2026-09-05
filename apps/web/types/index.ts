@@ -89,6 +89,7 @@ export interface Project {
   project_type: ProjectType;
   team_id?: string | null;
   poster_url?: string | null;
+  poster_source?: "manual" | "automatic" | null;
   is_public?: boolean;
   created_at: string;
   deleted_at: string | null;
