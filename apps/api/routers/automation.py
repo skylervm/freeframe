@@ -17,6 +17,7 @@ from ..models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
 from ..models.activity import ActivityLog
 from ..models.automation_token import ProjectAutomationToken
 from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRenewal, Project, ProjectMember, ProjectRole, ProjectType
+from ..models.trash import TrashEntityType, TrashOperation
 from ..models.user import User, UserStatus
 from ..schemas.bootstrap import BootstrapProjectCreate, BootstrapProjectResponse, BootstrapTokenRenewal
 from ..middleware.rate_limit import rate_limit
@@ -419,7 +420,25 @@ def delete_automation_asset(
 ):
     """Soft-delete one asset only when it belongs to the token's project."""
     asset = _asset_in_scope(db, asset_id, actor)
-    asset.deleted_at = datetime.now(timezone.utc)
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == asset.project_id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="Project has no active owner")
+    now = datetime.now(timezone.utc)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.asset,
+        entity_id=asset.id,
+        deleted_by_id=owner.user_id,
+        project_id=asset.project_id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    asset.deleted_at = now
+    asset.trash_operation_id = operation.id
     db.commit()
 
 

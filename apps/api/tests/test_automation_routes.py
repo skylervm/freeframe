@@ -1,6 +1,8 @@
 """Route-level boundaries for the project-scoped automation API."""
 import inspect
 import uuid
+
+from apps.api.models.trash import TrashEntityType
 import hashlib
 from unittest.mock import MagicMock
 import pytest
@@ -366,13 +368,27 @@ def test_review_version_falls_back_to_the_newest_version_when_needed():
 def test_automation_can_soft_delete_an_asset_in_its_project():
     actor = _actor()
     asset_id = uuid.uuid4()
-    asset = MagicMock(project_id=actor.project_id, deleted_at=None)
+    asset = MagicMock(id=asset_id, project_id=actor.project_id, deleted_at=None)
+    owner = MagicMock(user_id=uuid.uuid4())
     db = MagicMock()
     db.query.return_value = db
     db.filter.return_value = db
-    db.first.return_value = asset
+    db.first.side_effect = [asset, owner]
+    operation_id = uuid.uuid4()
+
+    def assign_operation_id():
+        db.add.call_args.args[0].id = operation_id
+
+    db.flush.side_effect = assign_operation_id
 
     automation_module.delete_automation_asset(asset_id, db, actor)
 
     assert asset.deleted_at is not None
+    assert asset.trash_operation_id is not None
+    operation = db.add.call_args.args[0]
+    assert operation.entity_type == TrashEntityType.asset
+    assert operation.entity_id == asset_id
+    assert operation.project_id == actor.project_id
+    assert operation.deleted_by_id == owner.user_id
+    assert asset.trash_operation_id == operation_id
     db.commit.assert_called_once()

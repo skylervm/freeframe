@@ -1,5 +1,6 @@
 """Real-Postgres regression tests for operation-scoped Trash recovery."""
 import uuid
+from types import SimpleNamespace
 
 from apps.api.models.asset import Asset, AssetType
 from apps.api.models.folder import Folder
@@ -9,6 +10,7 @@ from apps.api.models.trash import TrashEntityType, TrashOperation
 from apps.api.models.user import User
 from apps.api.models.workspace import Workspace
 from apps.api.routers.folders import delete_folder, restore_asset
+from apps.api.routers.automation import delete_automation_asset
 from apps.api.routers.project_folders import (
     delete_project_folder,
     list_unified_trash,
@@ -141,3 +143,21 @@ def test_trash_listing_paginates_only_operations_owned_by_current_user(real_db):
 
     assert {item["name"] for item in first_page["items"] + second_page["items"]} == {"owner-0", "owner-1"}
     assert third_page["items"] == []
+
+
+def test_automation_deleted_asset_appears_in_trash_and_restores(real_db):
+    owner = _user(real_db)
+    project = _project(real_db, owner)
+    asset = Asset(project_id=project.id, name="automation asset", asset_type=AssetType.video, created_by=owner.id)
+    real_db.add(asset)
+    real_db.flush()
+
+    delete_automation_asset(asset.id, db=real_db, actor=SimpleNamespace(project_id=project.id))
+
+    operation = real_db.query(TrashOperation).filter(TrashOperation.entity_id == asset.id).one()
+    trash = list_unified_trash(skip=0, limit=50, db=real_db, current_user=owner)
+    assert [item["operation_id"] for item in trash["items"]] == [str(operation.id)]
+
+    restore_unified_trash_item(operation.id, db=real_db, current_user=owner)
+    real_db.refresh(asset)
+    assert asset.deleted_at is None
