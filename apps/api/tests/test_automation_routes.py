@@ -348,3 +348,18 @@ def test_review_version_falls_back_to_the_newest_version_when_needed():
 
     assert result["id"] == uploading_version.id
     assert db.first.call_count == 4
+
+
+def test_automation_can_soft_delete_an_asset_in_its_project():
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    asset = MagicMock(project_id=actor.project_id, deleted_at=None)
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.return_value = asset
+
+    automation_module.delete_automation_asset(asset_id, db, actor)
+
+    assert asset.deleted_at is not None
+    db.commit.assert_called_once()

@@ -409,6 +409,18 @@ def get_review_version(
     }
 
 
+@router.delete("/assets/{asset_id}", status_code=204)
+def delete_automation_asset(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    """Soft-delete one asset only when it belongs to the token's project."""
+    asset = _asset_in_scope(db, asset_id, actor)
+    asset.deleted_at = datetime.now(timezone.utc)
+    db.commit()
+
+
 @router.get("/versions/{version_id}")
 def get_version_status(
     version_id: uuid.UUID,
