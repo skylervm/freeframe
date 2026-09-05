@@ -37,6 +37,9 @@ class Folder(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    trash_operation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("trash_operations.id"), nullable=True, index=True
+    )
 
     __table_args__ = (
         Index(

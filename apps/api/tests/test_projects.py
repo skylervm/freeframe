@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from apps.api.models.project import ProjectType, ProjectRole
+from apps.api.routers import projects as project_router
 
 
 def _mock_project(
@@ -181,6 +182,26 @@ def test_update_project(client, auth_headers, mock_db, test_user):
     )
     assert resp.status_code == 200
     assert resp.json()["name"] == "New Name"
+
+
+def test_update_project_restores_automatic_poster(client, auth_headers, mock_db, test_user, monkeypatch):
+    org_id = uuid.uuid4()
+    project = _mock_project(org_id, test_user.id)
+    project.poster_s3_key = "posters/project/custom.jpg"
+    member = _mock_project_member(project.id, test_user.id, ProjectRole.owner)
+    mock_db.first.side_effect = [project, member]
+    deleted_keys = []
+    monkeypatch.setattr(project_router, "delete_object", deleted_keys.append)
+
+    response = client.patch(
+        f"/projects/{project.id}",
+        json={"restore_automatic_poster": True},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert project.poster_s3_key is None
+    assert deleted_keys == ["posters/project/custom.jpg"]
 
 
 @pytest.fixture

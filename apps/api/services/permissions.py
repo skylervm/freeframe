@@ -1,8 +1,10 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 import uuid
-from ..models.user import User
+from ..models.user import User, UserStatus
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.project_folder import ProjectFolder, ProjectFolderScope, ProjectFolderShare
+from ..models.workspace import Workspace, WorkspaceMember, WorkspaceRole
 from ..models.asset import Asset
 from ..models.folder import Folder
 from ..models.share import AssetShare, ShareLink, ShareLinkItem, SharePermission
@@ -19,6 +21,153 @@ def get_project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID) -
     ).first()
 
 
+ROLE_RANK = {ProjectRole.owner: 4, ProjectRole.editor: 3, ProjectRole.reviewer: 2, ProjectRole.viewer: 1}
+
+
+def require_workspace_owner_retained(db: Session, user_id: uuid.UUID) -> None:
+    """Reject removing an account that is the last active owner of any workspace."""
+    memberships = db.query(WorkspaceMember).filter(
+        WorkspaceMember.user_id == user_id,
+        WorkspaceMember.role == WorkspaceRole.owner,
+        WorkspaceMember.deleted_at.is_(None),
+    ).all()
+    for membership in memberships:
+        db.query(Workspace).filter(Workspace.id == membership.workspace_id).with_for_update().first()
+        active_owners = db.query(WorkspaceMember).join(User, User.id == WorkspaceMember.user_id).filter(
+            WorkspaceMember.workspace_id == membership.workspace_id,
+            WorkspaceMember.role == WorkspaceRole.owner,
+            WorkspaceMember.deleted_at.is_(None),
+            User.deleted_at.is_(None),
+            User.status == UserStatus.active,
+        ).count()
+        target_is_active = db.query(User.id).filter(
+            User.id == user_id,
+            User.deleted_at.is_(None),
+            User.status == UserStatus.active,
+        ).first() is not None
+        if target_is_active and active_owners <= 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace must retain an active owner")
+
+
+def get_effective_project_role(db: Session, project_id: uuid.UUID, user: User) -> ProjectRole | None:
+    """Resolve direct, public, and inherited project-folder access.
+
+    Direct membership remains separate because owner-only mutations and
+    automation credentials must never be authorized by a folder share.
+    """
+    direct = get_project_member(db, project_id, user.id)
+    best = direct.role if direct else None
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
+    if not project:
+        return None
+    if project.is_public and (best is None or ROLE_RANK[ProjectRole.viewer] > ROLE_RANK[best]):
+        best = ProjectRole.viewer
+    chain: list[ProjectFolder] = []
+    current_id = project.project_folder_id
+    visited: set[uuid.UUID] = set()
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        folder = db.query(ProjectFolder).filter(ProjectFolder.id == current_id, ProjectFolder.deleted_at.is_(None)).first()
+        if not folder:
+            break
+        chain.append(folder)
+        current_id = folder.parent_id
+
+    inherited: ProjectRole | None = None
+    blocked = False
+    for folder in reversed(chain):
+        if folder.is_private:
+            inherited = None
+            blocked = True
+        role: ProjectRole | None = None
+        if folder.owner_id == user.id:
+            role = ProjectRole.editor
+        else:
+            share = db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id == folder.id, ProjectFolderShare.user_id == user.id, ProjectFolderShare.deleted_at.is_(None)).first()
+            if share:
+                role = share.role
+        if role is None and not blocked and folder.scope == ProjectFolderScope.workspace:
+            workspace_member = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == folder.workspace_id, WorkspaceMember.user_id == user.id, WorkspaceMember.deleted_at.is_(None)).first()
+            if workspace_member:
+                role = ProjectRole.viewer
+        if role and (inherited is None or ROLE_RANK[role] > ROLE_RANK[inherited]):
+            inherited = role
+    if inherited and (best is None or ROLE_RANK[inherited] > ROLE_RANK[best]):
+        best = inherited
+    return best
+
+
+def get_accessible_project_roles(db: Session, user: User) -> dict[uuid.UUID, ProjectRole]:
+    """Return effective roles for every accessible project without per-project queries."""
+    roles: dict[uuid.UUID, ProjectRole] = {}
+    for project_id, role in db.query(ProjectMember.project_id, ProjectMember.role).join(
+        Project, Project.id == ProjectMember.project_id,
+    ).filter(
+        ProjectMember.user_id == user.id,
+        ProjectMember.deleted_at.is_(None),
+        Project.deleted_at.is_(None),
+    ):
+        roles[project_id] = role
+
+    projects = db.query(Project.id, Project.project_folder_id, Project.is_public).filter(Project.deleted_at.is_(None)).all()
+    for project_id, _folder_id, is_public in projects:
+        if is_public and (project_id not in roles or ROLE_RANK[roles[project_id]] < ROLE_RANK[ProjectRole.viewer]):
+            roles[project_id] = ProjectRole.viewer
+
+    folders = db.query(ProjectFolder).filter(ProjectFolder.deleted_at.is_(None)).all()
+    folder_map = {folder.id: folder for folder in folders}
+    shared_roles = {
+        folder_id: role
+        for folder_id, role in db.query(ProjectFolderShare.folder_id, ProjectFolderShare.role).filter(
+            ProjectFolderShare.user_id == user.id,
+            ProjectFolderShare.deleted_at.is_(None),
+        )
+    }
+    workspace_ids = {
+        workspace_id
+        for (workspace_id,) in db.query(WorkspaceMember.workspace_id).filter(
+            WorkspaceMember.user_id == user.id,
+            WorkspaceMember.deleted_at.is_(None),
+        )
+    }
+    for project_id, folder_id, _is_public in projects:
+        chain: list[ProjectFolder] = []
+        current_id = folder_id
+        visited: set[uuid.UUID] = set()
+        while current_id and current_id not in visited:
+            visited.add(current_id)
+            folder = folder_map.get(current_id)
+            if not folder:
+                break
+            chain.append(folder)
+            current_id = folder.parent_id
+        inherited: ProjectRole | None = None
+        blocked = False
+        for folder in reversed(chain):
+            if folder.is_private:
+                inherited = None
+                blocked = True
+            role: ProjectRole | None = None
+            if folder.owner_id == user.id:
+                role = ProjectRole.editor
+            elif folder.id in shared_roles:
+                role = shared_roles[folder.id]
+            elif not blocked and folder.scope == ProjectFolderScope.workspace and folder.workspace_id in workspace_ids:
+                role = ProjectRole.viewer
+            if role and (inherited is None or ROLE_RANK[role] > ROLE_RANK[inherited]):
+                inherited = role
+        if inherited and (project_id not in roles or ROLE_RANK[inherited] > ROLE_RANK[roles[project_id]]):
+            roles[project_id] = inherited
+    return roles
+
+
+def require_effective_project_role(db: Session, project_id: uuid.UUID, user: User, minimum_role: ProjectRole) -> ProjectRole:
+    role = get_effective_project_role(db, project_id, user)
+    if not role or ROLE_RANK[role] < ROLE_RANK[minimum_role]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires project access")
+    return role
+
+
 def require_project_role(
     db: Session,
     project_id: uuid.UUID,
@@ -29,12 +178,6 @@ def require_project_role(
 
     Role hierarchy (descending): owner > editor > reviewer > viewer
     """
-    ROLE_RANK = {
-        ProjectRole.owner: 4,
-        ProjectRole.editor: 3,
-        ProjectRole.reviewer: 2,
-        ProjectRole.viewer: 1,
-    }
     member = get_project_member(db, project_id, user.id)
     if not member:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
@@ -59,25 +202,28 @@ def is_public_project(db: Session, project_id: uuid.UUID) -> bool:
 
 def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     """Check if user can access the asset via any path."""
-    # 1. Asset creator
-    if asset.created_by == user.id:
+    if user.deleted_at is not None or user.status != UserStatus.active:
+        return False
+    if asset.deleted_at is not None:
+        return False
+    project = db.query(Project).filter(
+        Project.id == asset.project_id,
+        Project.deleted_at.is_(None),
+    ).first()
+    if not project:
+        return False
+
+    # Project-derived access is always current, including for the uploader.
+    if get_effective_project_role(db, asset.project_id, user):
         return True
 
-    # 2. Project member
-    if get_project_member(db, asset.project_id, user.id):
-        return True
-
-    # 3. Direct AssetShare with user
+    # Direct asset shares remain independent of project-folder access.
     direct = db.query(AssetShare).filter(
         AssetShare.asset_id == asset.id,
         AssetShare.shared_with_user_id == user.id,
         AssetShare.deleted_at.is_(None),
     ).first()
     if direct:
-        return True
-
-    # 4. Public project — any authenticated user can view
-    if is_public_project(db, asset.project_id):
         return True
 
     return False
@@ -125,6 +271,21 @@ def validate_share_link(db: Session, token: str) -> ShareLink:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Share link is disabled")
     if link.expires_at and link.expires_at < datetime.now(timezone.utc):
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="Share link has expired")
+    if link.project_id:
+        project_id = link.project_id
+    elif link.asset_id:
+        asset = db.query(Asset).filter(Asset.id == link.asset_id, Asset.deleted_at.is_(None)).first()
+        project_id = asset.project_id if asset else None
+    elif link.folder_id:
+        folder = db.query(Folder).filter(Folder.id == link.folder_id, Folder.deleted_at.is_(None)).first()
+        project_id = folder.project_id if folder else None
+    else:
+        project_id = None
+    if not project_id or not db.query(Project.id).filter(
+        Project.id == project_id,
+        Project.deleted_at.is_(None),
+    ).first():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Share link not found")
     return link
 
 

@@ -23,7 +23,7 @@ from ..schemas.metadata import (
     MetadataFieldCreate,
     MetadataFieldResponse,
 )
-from ..services.permissions import require_project_role
+from ..services.permissions import require_effective_project_role, require_project_role
 from ..services.search import escape_like
 
 router = APIRouter(tags=["metadata"])
@@ -89,7 +89,7 @@ def create_metadata_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
 
     # Check for duplicate name (active fields only)
     existing = db.query(MetadataField).filter(
@@ -122,7 +122,7 @@ def list_metadata_fields(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     fields = db.query(MetadataField).filter(
         MetadataField.project_id == project_id,
         MetadataField.deleted_at.is_(None),
@@ -140,7 +140,7 @@ def delete_metadata_field(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     field = db.query(MetadataField).filter(
         MetadataField.id == field_id,
         MetadataField.project_id == project_id,
@@ -165,7 +165,7 @@ def set_asset_metadata(
     current_user: User = Depends(get_current_user),
 ):
     project_id = _get_project_for_asset(db, asset_id)
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
 
     for item in body:
         # Validate field exists and belongs to this project
@@ -209,7 +209,7 @@ def get_asset_metadata(
     current_user: User = Depends(get_current_user),
 ):
     project_id = _get_project_for_asset(db, asset_id)
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     return _get_asset_metadata_responses(db, asset_id)
 
 
@@ -247,7 +247,7 @@ def create_collection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     collection = Collection(
         project_id=project_id,
         name=body.name,
@@ -269,7 +269,7 @@ def list_collections(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     collections = db.query(Collection).filter(
         Collection.project_id == project_id,
         Collection.deleted_at.is_(None),
@@ -288,7 +288,7 @@ def get_collection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     collection = db.query(Collection).filter(
         Collection.id == collection_id,
         Collection.project_id == project_id,
@@ -310,7 +310,7 @@ def delete_collection(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     collection = db.query(Collection).filter(
         Collection.id == collection_id,
         Collection.project_id == project_id,
@@ -368,7 +368,7 @@ def list_collection_shares(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_project_role(db, project_id, current_user, ProjectRole.editor)
     collection = db.query(Collection).filter(
         Collection.id == collection_id,
         Collection.project_id == project_id,

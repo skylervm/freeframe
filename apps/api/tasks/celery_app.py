@@ -51,6 +51,7 @@ celery_app.conf.update(
         "reap_stale_uploads": {"queue": "maintenance"},
         "send_due_date_reminders": {"queue": "maintenance"},
         "cleanup_soft_deleted": {"queue": "maintenance"},
+        "purge_trash_storage": {"queue": "maintenance"},
         "sweep_orphan_s3": {"queue": "maintenance"},
         "dispatch_pending_processing": {"queue": "maintenance"},
         # Not housekeeping: this one is dispatched from a request handler and
@@ -88,6 +89,10 @@ celery_app.conf.beat_schedule = {
     "cleanup-soft-deleted": {
         "task": "cleanup_soft_deleted",
         "schedule": crontab(minute=0, hour=3),  # daily at 03:00 UTC
+    },
+    "purge-trash-storage": {
+        "task": "purge_trash_storage",
+        "schedule": crontab(minute="*/10"),
     },
     "sweep-orphan-s3": {
         "task": "sweep_orphan_s3",

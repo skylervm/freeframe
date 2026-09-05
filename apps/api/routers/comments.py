@@ -386,12 +386,14 @@ def create_comment(
 
     # Notify asset creator about the comment (unless they're the commenter)
     if asset.created_by and asset.created_by != current_user.id:
-        db.add(Notification(
-            user_id=asset.created_by,
-            type=NotificationType.comment,
-            asset_id=asset_id,
-            comment_id=comment.id,
-        ))
+        asset_creator = db.query(User).filter(User.id == asset.created_by, User.deleted_at.is_(None)).first()
+        if asset_creator and can_access_asset(db, asset, asset_creator):
+            db.add(Notification(
+                user_id=asset.created_by,
+                type=NotificationType.comment,
+                asset_id=asset_id,
+                comment_id=comment.id,
+            ))
 
     # Activity log
     activity = ActivityLog(user_id=current_user.id, asset_id=asset_id, action=ActivityAction.commented)
@@ -432,12 +434,14 @@ def reply_to_comment(
 
     # Notify parent comment author about the reply (unless they're the replier)
     if parent.author_id and parent.author_id != current_user.id:
-        db.add(Notification(
-            user_id=parent.author_id,
-            type=NotificationType.comment,
-            asset_id=asset_id,
-            comment_id=reply.id,
-        ))
+        parent_author = db.query(User).filter(User.id == parent.author_id, User.deleted_at.is_(None)).first()
+        if parent_author and can_access_asset(db, asset, parent_author):
+            db.add(Notification(
+                user_id=parent.author_id,
+                type=NotificationType.comment,
+                asset_id=asset_id,
+                comment_id=reply.id,
+            ))
 
     db.commit()
     db.refresh(reply)
@@ -454,9 +458,10 @@ def update_comment(
     comment = db.query(Comment).filter(Comment.id == comment_id, Comment.deleted_at.is_(None)).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    asset = _get_asset(db, comment.asset_id)
+    require_asset_access(db, asset, current_user)
     # Allow comment owner or project owner to edit
     if comment.author_id != current_user.id:
-        asset = _get_asset(db, comment.asset_id)
         member = db.query(ProjectMember).filter(
             ProjectMember.project_id == asset.project_id,
             ProjectMember.user_id == current_user.id,
@@ -481,9 +486,10 @@ def delete_comment(
     comment = db.query(Comment).filter(Comment.id == comment_id, Comment.deleted_at.is_(None)).first()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    asset = _get_asset(db, comment.asset_id)
+    require_asset_access(db, asset, current_user)
     # Allow comment owner or project owner to delete
     if comment.author_id != current_user.id:
-        asset = _get_asset(db, comment.asset_id)
         member = db.query(ProjectMember).filter(
             ProjectMember.project_id == asset.project_id,
             ProjectMember.user_id == current_user.id,
@@ -590,12 +596,13 @@ def delete_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Must be comment author OR project owner/editor
+    require_asset_access(db, asset, current_user)
     from ..models.project import ProjectRole
-    from ..services.permissions import get_project_member
+    from ..services.permissions import get_effective_project_role
     is_comment_author = comment.author_id == current_user.id
     if not is_comment_author:
-        pm = get_project_member(db, asset.project_id, current_user.id)
-        if not pm or pm.role not in (ProjectRole.owner, ProjectRole.editor):
+        role = get_effective_project_role(db, asset.project_id, current_user)
+        if not role or role not in (ProjectRole.owner, ProjectRole.editor):
             raise HTTPException(status_code=403, detail="Not authorized to delete this attachment")
 
     # Delete from S3
@@ -943,7 +950,7 @@ def guest_comment(
     for email in set(emails):
         from ..services.auth_service import get_user_by_email
         user = get_user_by_email(db, email)
-        if user:
+        if user and can_access_asset(db, asset, user):
             mention = Mention(comment_id=comment.id, mentioned_user_id=user.id)
             db.add(mention)
             notif = Notification(

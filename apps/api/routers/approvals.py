@@ -11,7 +11,7 @@ from ..models.approval import Approval, ApprovalStatus
 from ..models.activity import ActivityLog, ActivityAction, Notification, NotificationType
 from ..models.project import ProjectRole
 from ..schemas.approval import ApprovalCreate, ApprovalResponse
-from ..services.permissions import require_asset_access, require_project_role
+from ..services.permissions import can_access_asset, require_asset_access, require_effective_project_role
 from ..tasks.email_tasks import send_approval_email
 from ..tasks.celery_app import send_task_safe
 from ..config import settings
@@ -71,17 +71,16 @@ def approve_asset(
 ):
     asset = _get_asset(db, asset_id)
     # reviewer or above can approve
-    require_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
 
     approval = _upsert_approval(db, asset, body.version_id, current_user, ApprovalStatus.approved, body.note)
 
     # Activity + notification to asset creator
     db.add(ActivityLog(user_id=current_user.id, asset_id=asset_id, action=ActivityAction.approved))
     if asset.created_by != current_user.id:
-        db.add(Notification(user_id=asset.created_by, type=NotificationType.approval, asset_id=asset_id))
-        # Send approval email
-        creator = db.query(User).filter(User.id == asset.created_by).first()
-        if creator:
+        creator = db.query(User).filter(User.id == asset.created_by, User.deleted_at.is_(None)).first()
+        if creator and can_access_asset(db, asset, creator):
+            db.add(Notification(user_id=asset.created_by, type=NotificationType.approval, asset_id=asset_id))
             asset_link = f"{settings.frontend_url}/assets/{asset_id}"
             send_task_safe(
                 send_approval_email,
@@ -105,16 +104,15 @@ def reject_asset(
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset(db, asset_id)
-    require_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.reviewer)
 
     approval = _upsert_approval(db, asset, body.version_id, current_user, ApprovalStatus.rejected, body.note)
 
     db.add(ActivityLog(user_id=current_user.id, asset_id=asset_id, action=ActivityAction.rejected))
     if asset.created_by != current_user.id:
-        db.add(Notification(user_id=asset.created_by, type=NotificationType.approval, asset_id=asset_id))
-        # Send rejection email
-        creator = db.query(User).filter(User.id == asset.created_by).first()
-        if creator:
+        creator = db.query(User).filter(User.id == asset.created_by, User.deleted_at.is_(None)).first()
+        if creator and can_access_asset(db, asset, creator):
+            db.add(Notification(user_id=asset.created_by, type=NotificationType.approval, asset_id=asset_id))
             asset_link = f"{settings.frontend_url}/assets/{asset_id}"
             send_task_safe(
                 send_approval_email,

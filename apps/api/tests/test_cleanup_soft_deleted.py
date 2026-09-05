@@ -15,6 +15,9 @@ from apps.api.models.share import ShareLink, ShareLinkItem, ShareLinkActivity, A
 from apps.api.models.metadata import MetadataField, AssetMetadata, Collection, CollectionShare, FieldType
 from apps.api.models.branding import ProjectBranding, WatermarkSettings
 from apps.api.models.activity import Mention, ActivityLog, Notification, NotificationType
+from apps.api.models.project_folder import PersonalProjectPlacement, ProjectFolder, ProjectFolderScope
+from apps.api.models.workspace import Workspace
+from apps.api.models.trash import TrashStorageDeletion
 
 
 # ── seed helpers (module-level; extended by later tasks) ─────────────────────────
@@ -60,10 +63,7 @@ def _comment(db, asset, version, owner, parent=None):
     return c
 
 
-def test_purge_comment_removes_subtree_and_attachment_s3(real_db, monkeypatch):
-    deleted = []
-    monkeypatch.setattr(ct, "delete_object", lambda k: deleted.append(k))
-    monkeypatch.setattr(ct, "delete_prefix", lambda k: deleted.append(k))
+def test_purge_comment_removes_subtree_and_queues_attachment_s3(real_db):
 
     owner = _user(real_db)
     project = _project(real_db, owner)
@@ -89,7 +89,7 @@ def test_purge_comment_removes_subtree_and_attachment_s3(real_db, monkeypatch):
     assert real_db.query(CommentReaction).filter_by(comment_id=parent.id).count() == 0
     assert real_db.query(Mention).filter_by(comment_id=parent.id).count() == 0
     assert real_db.query(Notification).filter_by(comment_id=parent.id).count() == 0
-    assert "att/x" in deleted
+    assert real_db.query(TrashStorageDeletion).filter_by(s3_key="att/x", is_prefix=False).count() == 1
     assert counts.comments == 2  # parent + reply
 
 
@@ -101,10 +101,7 @@ def _media(db, version, ftype=FileType.video, processed="processed/x/", thumb="t
     return mf
 
 
-def test_purge_version_removes_media_carousel_and_s3(real_db, monkeypatch):
-    deleted = []
-    monkeypatch.setattr(ct, "delete_object", lambda k: deleted.append(k))
-    monkeypatch.setattr(ct, "delete_prefix", lambda k: deleted.append(k))
+def test_purge_version_removes_media_carousel_and_queues_s3(real_db):
 
     owner = _user(real_db)
     project = _project(real_db, owner)
@@ -126,7 +123,8 @@ def test_purge_version_removes_media_carousel_and_s3(real_db, monkeypatch):
     assert real_db.query(Comment).filter_by(version_id=version.id).count() == 0
     assert real_db.query(Approval).filter_by(version_id=version.id).count() == 0
     assert real_db.query(Asset).filter_by(id=asset.id).count() == 1  # asset untouched
-    assert set(deleted) == {f"raw/{version.id}", "processed/x/", "thumb/x"}
+    queued = {(entry.s3_key, entry.is_prefix) for entry in real_db.query(TrashStorageDeletion).all()}
+    assert queued == {(f"raw/{version.id}", False), ("processed/x/", True), ("thumb/x", False)}
     assert counts.versions == 1 and counts.media_files == 1
 
 
@@ -266,10 +264,7 @@ def test_purge_folder_skips_child_reparented_out_since_scan(real_db, monkeypatch
     assert counts.folders == 1 and counts.assets == 0
 
 
-def test_purge_project_removes_everything(real_db, monkeypatch):
-    deleted = []
-    monkeypatch.setattr(ct, "delete_object", lambda k: deleted.append(k))
-    monkeypatch.setattr(ct, "delete_prefix", lambda k: deleted.append(k))
+def test_purge_project_removes_everything_and_queues_s3(real_db):
 
     owner = _user(real_db)
     project = _project(real_db, owner)
@@ -281,6 +276,21 @@ def test_purge_project_removes_everything(real_db, monkeypatch):
     real_db.add(ProjectBranding(project_id=project.id, logo_s3_key="branding/logo.png"))
     real_db.add(WatermarkSettings(project_id=project.id))
     real_db.add(ProjectMember(project_id=project.id, user_id=owner.id))
+    workspace = Workspace(name=f"gc-workspace-{uuid.uuid4()}")
+    real_db.add(workspace); real_db.flush()
+    project_folder = ProjectFolder(
+        workspace_id=workspace.id,
+        owner_id=owner.id,
+        created_by=owner.id,
+        name=f"gc-folder-{uuid.uuid4()}",
+        scope=ProjectFolderScope.personal,
+    )
+    real_db.add(project_folder); real_db.flush()
+    real_db.add(PersonalProjectPlacement(
+        user_id=owner.id,
+        project_id=project.id,
+        folder_id=project_folder.id,
+    ))
     coll = Collection(project_id=project.id, name="c", created_by=owner.id)
     real_db.add(coll); real_db.flush()
     real_db.add(CollectionShare(collection_id=coll.id, token=f"c-{uuid.uuid4()}", created_by=owner.id))
@@ -300,12 +310,14 @@ def test_purge_project_removes_everything(real_db, monkeypatch):
     assert real_db.query(ProjectBranding).filter_by(project_id=project.id).count() == 0
     assert real_db.query(WatermarkSettings).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ProjectMember).filter_by(project_id=project.id).count() == 0
+    assert real_db.query(PersonalProjectPlacement).filter_by(project_id=project.id).count() == 0
     assert real_db.query(Collection).filter_by(project_id=project.id).count() == 0
     assert real_db.query(CollectionShare).filter_by(collection_id=coll.id).count() == 0
     assert real_db.query(MetadataField).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ShareLink).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ActivityLog).filter_by(project_id=project.id).count() == 0
-    assert "branding/logo.png" in deleted and "posters/p.webp" in deleted
+    queued_keys = {entry.s3_key for entry in real_db.query(TrashStorageDeletion).all()}
+    assert {"branding/logo.png", "posters/p.webp"}.issubset(queued_keys)
     assert counts.projects == 1 and counts.assets == 2 and counts.folders == 1
 
 
@@ -419,6 +431,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         "collection_shares", "share_link_items", "share_link_activity", "watermark_settings",
         "project_members", "project_brandings", "activity_logs", "annotations", "comment_attachments",
         "comment_reactions", "mentions", "notifications", "project_automation_tokens",
+        "personal_project_placements",
     }
     # (referencing_table, referencing_column) confirmed handled by a _purge_* helper.
     KNOWN_HANDLED = {
@@ -427,9 +440,12 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("project_brandings", "project_id"), ("watermark_settings", "project_id"),
         ("metadata_fields", "project_id"), ("collections", "project_id"),
             ("project_members", "project_id"), ("activity_logs", "project_id"),
+            ("personal_project_placements", "project_id"),
             ("project_automation_tokens", "project_id"),
             ("automation_bootstrap_requests", "project_id"),
             ("automation_bootstrap_renewals", "project_id"),
+            # -> projects.id (database preserves historical Trash operations)
+            ("trash_operations", "project_id"),
         # -> project_automation_tokens.id
         ("automation_bootstrap_requests", "token_id"),
         ("automation_bootstrap_renewals", "token_id"),

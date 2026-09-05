@@ -13,6 +13,7 @@ class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     is_public: bool | None = None
+    restore_automatic_poster: bool = False
 
 class ProjectResponse(BaseModel):
     id: uuid.UUID
@@ -20,6 +21,7 @@ class ProjectResponse(BaseModel):
     description: str | None
     project_type: ProjectType
     created_by: uuid.UUID
+    project_folder_id: uuid.UUID | None = None
     created_at: datetime
     poster_url: str | None = None
     poster_source: Literal["manual", "automatic"] | None = None

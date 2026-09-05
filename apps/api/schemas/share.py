@@ -49,7 +49,7 @@ class ShareLinkResponse(BaseModel):
     asset_id: Optional[uuid.UUID] = None
     folder_id: Optional[uuid.UUID] = None
     project_id: Optional[uuid.UUID] = None
-    token: str
+    token: str | None = None
     title: str
     description: Optional[str] = None
     is_enabled: bool
@@ -117,7 +117,7 @@ class ShareLinkUpdate(BaseModel):
 
 class ShareLinkListItem(BaseModel):
     id: uuid.UUID
-    token: str
+    token: str | None = None
     title: str
     description: Optional[str] = None
     is_enabled: bool

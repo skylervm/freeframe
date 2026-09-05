@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { ProjectPosterCropDialog } from '@/components/projects/project-poster-crop-dialog'
 import type { Project } from '@/types'
 
 interface ProjectSettingsDialogProps {
@@ -28,25 +29,40 @@ export function ProjectSettingsDialog({
   const [isPublic, setIsPublic] = React.useState(project.is_public ?? false)
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
+  const [pendingCrop, setPendingCrop] = React.useState<File | null>(null)
   const [useAutomaticCover, setUseAutomaticCover] = React.useState(false)
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Sync state when project changes
+  // A parent refresh creates a new project object. Keep unsaved edits until the
+  // dialog is closed or the user switches projects.
   React.useEffect(() => {
     setName(project.name)
     setDescription(project.description || '')
     setIsPublic(project.is_public ?? false)
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
+    setPendingCrop(null)
     setUseAutomaticCover(false)
     setSaveError(null)
-  }, [project, open])
+  }, [project.id, open])
 
   const handlePosterSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    e.target.value = ''
+    if (file.type === 'image/gif') {
+      setPosterFile(file)
+      setUseAutomaticCover(false)
+      setPosterPreview(URL.createObjectURL(file))
+      return
+    }
+    setPendingCrop(file)
+  }
+
+  const handleCropConfirm = (file: File) => {
+    setPendingCrop(null)
     setPosterFile(file)
     setUseAutomaticCover(false)
     setPosterPreview(URL.createObjectURL(file))
@@ -61,8 +77,6 @@ export function ProjectSettingsDialog({
         const formData = new FormData()
         formData.append('file', posterFile)
         await api.upload(`/projects/${project.id}/poster`, formData)
-      } else if (useAutomaticCover) {
-        await api.delete(`/projects/${project.id}/poster`)
       }
 
       // Update project fields
@@ -70,6 +84,7 @@ export function ProjectSettingsDialog({
         name: name.trim(),
         description: description.trim() || null,
         is_public: isPublic,
+        restore_automatic_poster: useAutomaticCover,
       })
 
       onUpdated()
@@ -91,6 +106,7 @@ export function ProjectSettingsDialog({
   const gradient = getGradientForProject(project.id)
 
   return (
+    <>
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
@@ -232,5 +248,11 @@ export function ProjectSettingsDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+    <ProjectPosterCropDialog
+      file={pendingCrop}
+      onCancel={() => setPendingCrop(null)}
+      onConfirm={handleCropConfirm}
+    />
+    </>
   )
 }

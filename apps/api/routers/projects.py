@@ -11,11 +11,13 @@ from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
 from ..models.automation_token import ProjectAutomationToken
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
+from ..models.trash import TrashEntityType, TrashOperation
 from ..schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectMemberResponse, AddProjectMemberRequest, UpdateProjectMemberRequest
 from ..tasks.email_tasks import send_project_added_email
 from ..tasks.celery_app import send_task_safe
 from ..services.s3_service import put_object, generate_presigned_get_url, delete_object
 from ..services.storage import project_storage_used_bytes
+from ..services.permissions import get_accessible_project_roles, get_effective_project_role
 from ..config import settings
 from ..schemas.automation_token import AutomationTokenCreate, AutomationTokenCreated, AutomationTokenResponse
 
@@ -174,23 +176,12 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db), current_u
 
 @router.get("", response_model=list[ProjectResponse])
 def list_projects(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    from sqlalchemy import or_
-
-    # Get memberships for current user
-    memberships = db.query(ProjectMember).filter(
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-    ).all()
-    membership_map = {m.project_id: m.role for m in memberships}
-    member_project_ids = list(membership_map.keys())
-
-    # Get projects: user's memberships + all public projects
+    membership_map = get_accessible_project_roles(db, current_user)
+    if not membership_map:
+        return []
     projects = db.query(Project).filter(
         Project.deleted_at.is_(None),
-        or_(
-            Project.id.in_(member_project_ids) if member_project_ids else False,
-            Project.is_public == True,
-        ),
+        Project.id.in_(membership_map.keys()),
     ).all()
 
     all_project_ids = [p.id for p in projects]
@@ -249,17 +240,12 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
 @router.get("/{project_id}", response_model=ProjectResponse)
 def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = _get_project(db, project_id)
-    member = db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-    ).first()
-    if not member and not project.is_public:
+    role = get_effective_project_role(db, project_id, current_user)
+    if not role:
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
     _apply_poster_response(resp, project, _automatic_poster_keys(db, [project.id]).get(project.id))
-    if member:
-        resp.role = member.role
+    resp.role = role
     # Calculate storage, asset count, member count
     resp.asset_count = db.query(func.count(Asset.id)).filter(
         Asset.project_id == project_id, Asset.deleted_at.is_(None),
@@ -274,13 +260,22 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
 def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = _get_project(db, project_id)
     _require_project_owner(db, project_id, current_user)
+    poster_to_delete = None
     if body.name is not None:
         project.name = body.name
     if body.description is not None:
         project.description = body.description
     if body.is_public is not None:
         project.is_public = body.is_public
+    if body.restore_automatic_poster and project.poster_s3_key:
+        poster_to_delete = project.poster_s3_key
+        project.poster_s3_key = None
     db.commit()
+    if poster_to_delete:
+        try:
+            delete_object(poster_to_delete)
+        except Exception:
+            pass
     db.refresh(project)
     resp = ProjectResponse.model_validate(project)
     _apply_poster_response(resp, project, _automatic_poster_keys(db, [project.id]).get(project.id))
@@ -290,19 +285,24 @@ def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Dep
 def delete_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     project = _get_project(db, project_id)
     _require_project_owner(db, project_id, current_user)
-    project.deleted_at = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.project,
+        entity_id=project.id,
+        deleted_by_id=current_user.id,
+        project_id=project.id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    project.deleted_at = now
+    project.trash_operation_id = operation.id
     db.commit()
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberResponse])
 def list_project_members(project_id: uuid.UUID, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     _get_project(db, project_id)
-    # Verify user is a member
-    member = db.query(ProjectMember).filter(
-        ProjectMember.project_id == project_id,
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-    ).first()
-    if not member:
+    if not get_effective_project_role(db, project_id, current_user):
         raise HTTPException(status_code=403, detail="Not a project member")
     
     members = db.query(ProjectMember).filter(

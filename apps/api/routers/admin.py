@@ -12,6 +12,7 @@ from .users import require_admin
 from ..tasks.celery_app import send_task_safe
 from ..tasks.cleanup_tasks import cleanup_soft_deleted
 from ..schemas.admin import PurgeStartResponse
+from ..services.permissions import require_workspace_owner_retained
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -56,6 +57,7 @@ def deactivate_user(
     user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    require_workspace_owner_retained(db, user.id)
 
     user.status = UserStatus.deactivated
     db.commit()

@@ -293,9 +293,9 @@ function LinkTab({ assetId }: LinkTabProps) {
           ) : (
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {links.map((link) => {
-                const linkUrl =
-                  link.url ??
-                  `${typeof window !== "undefined" ? window.location.origin : ""}/share/${link.token}`;
+                const linkUrl = link.url ?? (link.token
+                  ? `${typeof window !== "undefined" ? window.location.origin : ""}/share/${link.token}`
+                  : null);
                 return (
                   <div
                     key={link.id}
@@ -319,11 +319,11 @@ function LinkTab({ assetId }: LinkTabProps) {
                         )}
                       </div>
                       <span className="font-mono text-2xs text-text-tertiary truncate block">
-                        {linkUrl}
+                        {linkUrl ?? "Link details available"}
                       </span>
                     </div>
-                    <CopyButton text={linkUrl} />
-                    <button
+                    {linkUrl && <CopyButton text={linkUrl} />}
+                    {linkUrl && <button
                       onClick={() => handleDelete(link.id)}
                       disabled={deletingId === link.id}
                       className="text-text-tertiary hover:text-status-error transition-colors disabled:opacity-50"
@@ -333,7 +333,7 @@ function LinkTab({ assetId }: LinkTabProps) {
                       ) : (
                         <Trash2 className="h-3.5 w-3.5" />
                       )}
-                    </button>
+                    </button>}
                   </div>
                 );
               })}
@@ -634,6 +634,7 @@ export function ShareDialog({
   }, [shareLinks, search]);
 
   async function handleAddToLink(link: ShareLinkListItem) {
+    if (!link.token) return;
     setAddingToToken(link.token);
     try {
       await api.post(`/share/${link.token}/add-asset/${assetId}`, {});
@@ -725,13 +726,14 @@ export function ShareDialog({
                     </p>
                   ) : (
                     filteredLinks.map((link) => {
-                      const isAdding = addingToToken === link.token;
-                      const isAdded = addedToToken === link.token;
+                      const isUnavailable = !link.token;
+                      const isAdding = !!link.token && addingToToken === link.token;
+                      const isAdded = !!link.token && addedToToken === link.token;
                       return (
                         <button
                           key={link.id}
                           onClick={() => handleAddToLink(link)}
-                          disabled={isAdding || isAdded}
+                          disabled={isUnavailable || isAdding || isAdded}
                           className={cn(
                             "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors",
                             isAdded
@@ -741,7 +743,9 @@ export function ShareDialog({
                           )}
                         >
                           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-bg-tertiary shrink-0">
-                            {isAdding ? (
+                            {isUnavailable ? (
+                              <span className="text-xs text-text-tertiary">Read only</span>
+                            ) : isAdding ? (
                               <Loader2 className="h-4 w-4 animate-spin text-text-tertiary" />
                             ) : isAdded ? (
                               <Check className="h-4 w-4 text-status-success" />
