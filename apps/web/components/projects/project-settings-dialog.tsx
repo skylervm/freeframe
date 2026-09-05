@@ -3,7 +3,7 @@
 import * as React from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
-import { X, ImagePlus, Globe, Lock } from 'lucide-react'
+import { X, ImagePlus, Globe, Lock, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
@@ -28,6 +28,8 @@ export function ProjectSettingsDialog({
   const [isPublic, setIsPublic] = React.useState(project.is_public ?? false)
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
+  const [useAutomaticCover, setUseAutomaticCover] = React.useState(false)
+  const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
@@ -38,23 +40,29 @@ export function ProjectSettingsDialog({
     setIsPublic(project.is_public ?? false)
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
-  }, [project])
+    setUseAutomaticCover(false)
+    setSaveError(null)
+  }, [project, open])
 
   const handlePosterSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     setPosterFile(file)
+    setUseAutomaticCover(false)
     setPosterPreview(URL.createObjectURL(file))
   }
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       // Upload poster if changed
       if (posterFile) {
         const formData = new FormData()
         formData.append('file', posterFile)
         await api.upload(`/projects/${project.id}/poster`, formData)
+      } else if (useAutomaticCover) {
+        await api.delete(`/projects/${project.id}/poster`)
       }
 
       // Update project fields
@@ -67,10 +75,17 @@ export function ProjectSettingsDialog({
       onUpdated()
       onOpenChange(false)
     } catch {
-      // silently fail
+      setSaveError('Could not save all changes. Some changes may have saved. Please try again.')
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleUseAutomaticCover = () => {
+    setUseAutomaticCover(true)
+    setPosterFile(null)
+    setPosterPreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const gradient = getGradientForProject(project.id)
@@ -123,6 +138,21 @@ export function ProjectSettingsDialog({
                   className="hidden"
                   onChange={handlePosterSelect}
                 />
+                {useAutomaticCover ? (
+                  <p className="text-xs text-text-tertiary">Automatic cover will appear after saving</p>
+                ) : project.poster_source === 'manual' || posterFile ? (
+                  <button
+                    type="button"
+                    onClick={handleUseAutomaticCover}
+                    disabled={saving}
+                    className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Use automatic cover
+                  </button>
+                ) : project.poster_source === 'automatic' ? (
+                  <p className="text-xs text-text-tertiary">Automatic video cover</p>
+                ) : null}
 
                 {/* Project name input */}
                 <input
@@ -190,6 +220,7 @@ export function ProjectSettingsDialog({
           </div>
 
           {/* Footer */}
+          {saveError && <p role="alert" className="px-6 pb-3 text-sm text-status-error">{saveError}</p>}
           <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border">
             <Dialog.Close asChild>
               <Button variant="secondary" size="sm">Cancel</Button>
@@ -203,4 +234,3 @@ export function ProjectSettingsDialog({
     </Dialog.Root>
   )
 }
-
