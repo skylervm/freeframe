@@ -307,6 +307,13 @@ def test_run_returns_stdout():
         assert result == "output data"
 
 
+def test_thumbnail_seek_avoids_opening_frame_and_stays_inside_short_video():
+    assert FFmpegTranscoder._thumbnail_seek_seconds(3600) == 30.0
+    assert FFmpegTranscoder._thumbnail_seek_seconds(20) == 2.0
+    assert FFmpegTranscoder._thumbnail_seek_seconds(1) == 0.0
+    assert FFmpegTranscoder._thumbnail_seek_seconds(None) == 5.0
+
+
 def test_transcode_returns_probe_metadata():
     t = FFmpegTranscoder(MagicMock(), "bucket")
     video_probe = json.dumps({

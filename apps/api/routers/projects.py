@@ -30,48 +30,59 @@ def _get_project(db: Session, project_id: uuid.UUID) -> Project:
     return project
 
 def _automatic_poster_keys(db: Session, project_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-    """Return each project's oldest video's newest ready thumbnail."""
+    """Return one stable video thumbnail per project without per-card queries.
+
+    The oldest video asset is the project's master. Its newest usable thumbnail
+    wins, so a processing or failed revision never replaces a working cover.
+    """
     if not project_ids:
         return {}
-    rows = (
-        db.query(
-            Asset.project_id,
-            Asset.id,
-            AssetVersion.version_number,
-            MediaFile.s3_key_thumbnail,
-        )
-        .join(AssetVersion, AssetVersion.asset_id == Asset.id)
-        .join(MediaFile, MediaFile.version_id == AssetVersion.id)
-        .filter(
-            Asset.project_id.in_(project_ids),
-            Asset.asset_type == AssetType.video,
-            Asset.deleted_at.is_(None),
-            AssetVersion.deleted_at.is_(None),
-            AssetVersion.processing_status == ProcessingStatus.ready,
-            MediaFile.s3_key_thumbnail.isnot(None),
-        )
-        .order_by(
-            Asset.project_id.asc(),
-            Asset.created_at.asc(),
-            Asset.id.asc(),
-            AssetVersion.version_number.desc(),
-            MediaFile.sequence_order.asc().nullsfirst(),
-            MediaFile.id.asc(),
-        )
-        .all()
-    )
+
+    rows = db.query(
+        Asset.project_id,
+        Asset.id,
+        AssetVersion.version_number,
+        MediaFile.s3_key_thumbnail,
+    ).join(
+        AssetVersion, AssetVersion.asset_id == Asset.id,
+    ).join(
+        MediaFile, MediaFile.version_id == AssetVersion.id,
+    ).filter(
+        Asset.project_id.in_(project_ids),
+        Asset.asset_type == AssetType.video,
+        Asset.deleted_at.is_(None),
+        AssetVersion.deleted_at.is_(None),
+        AssetVersion.processing_status == ProcessingStatus.ready,
+        MediaFile.s3_key_thumbnail.isnot(None),
+    ).order_by(
+        Asset.project_id.asc(),
+        Asset.created_at.asc(),
+        Asset.id.asc(),
+        AssetVersion.version_number.desc(),
+        MediaFile.sequence_order.asc().nullsfirst(),
+        MediaFile.id.asc(),
+    ).all()
+
     covers: dict[uuid.UUID, str] = {}
     for project_id, _asset_id, _version_number, thumbnail_key in rows:
-        covers.setdefault(project_id, thumbnail_key)
+        if project_id not in covers:
+            covers[project_id] = thumbnail_key
     return covers
 
 
-def _resolve_poster_url(project: Project, automatic_poster_key: str | None = None) -> str | None:
+def _apply_poster_response(
+    response: ProjectResponse,
+    project: Project,
+    automatic_poster_key: str | None = None,
+) -> ProjectResponse:
+    """Apply manual-first poster precedence to a project API response."""
     if project.poster_s3_key:
-        return generate_presigned_get_url(project.poster_s3_key)
-    if automatic_poster_key:
-        return generate_presigned_get_url(automatic_poster_key)
-    return None
+        response.poster_url = generate_presigned_get_url(project.poster_s3_key)
+        response.poster_source = "manual"
+    elif automatic_poster_key:
+        response.poster_url = generate_presigned_get_url(automatic_poster_key)
+        response.poster_source = "automatic"
+    return response
 
 def _require_project_owner(db: Session, project_id: uuid.UUID, user: User) -> ProjectMember:
     member = db.query(ProjectMember).filter(
@@ -217,7 +228,7 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
     result = []
     for p in projects:
         resp = ProjectResponse.model_validate(p)
-        resp.poster_url = _resolve_poster_url(p, automatic_poster_keys.get(p.id))
+        _apply_poster_response(resp, p, automatic_poster_keys.get(p.id))
         resp.asset_count = asset_counts.get(p.id, 0)
         resp.storage_bytes = storage_map.get(p.id, 0)
         resp.member_count = member_counts.get(p.id, 0)
@@ -233,7 +244,7 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
     if not role:
         raise HTTPException(status_code=403, detail="Not a project member")
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
+    _apply_poster_response(resp, project, _automatic_poster_keys(db, [project.id]).get(project.id))
     resp.role = role
     # Calculate storage, asset count, member count
     resp.asset_count = db.query(func.count(Asset.id)).filter(
@@ -267,7 +278,7 @@ def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Dep
             pass
     db.refresh(project)
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
+    _apply_poster_response(resp, project, _automatic_poster_keys(db, [project.id]).get(project.id))
     return resp
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -378,21 +389,32 @@ async def upload_project_poster(
         raise HTTPException(status_code=400, detail="File must be under 10MB")
 
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
-    old_poster_key = project.poster_s3_key
+    old_s3_key = project.poster_s3_key
     s3_key = f"posters/{project_id}/{uuid.uuid4()}.{ext}"
-    put_object(s3_key, data, content_type=file.content_type, cache_control="max-age=86400")
-
-    project.poster_s3_key = s3_key
-    db.commit()
-    if old_poster_key:
+    put_object(s3_key, data, content_type=file.content_type, cache_control="max-age=31536000, immutable")
+    try:
+        project.poster_s3_key = s3_key
+        db.commit()
+    except Exception:
+        db.rollback()
         try:
-            delete_object(old_poster_key)
+            delete_object(s3_key)
         except Exception:
             pass
+        raise
+
+    # A refresh failure cannot undo a successful commit. Never compensate by
+    # deleting the new object once the database references it.
     db.refresh(project)
 
+    if old_s3_key:
+        try:
+            delete_object(old_s3_key)
+        except Exception:
+            pass
+
     resp = ProjectResponse.model_validate(project)
-    resp.poster_url = _resolve_poster_url(project, _automatic_poster_keys(db, [project.id]).get(project.id))
+    _apply_poster_response(resp, project)
     return resp
 
 @router.delete("/{project_id}/poster", status_code=status.HTTP_204_NO_CONTENT)
@@ -405,9 +427,14 @@ def remove_project_poster(
     _require_project_owner(db, project_id, current_user)
 
     if project.poster_s3_key:
+        old_s3_key = project.poster_s3_key
+        project.poster_s3_key = None
         try:
-            delete_object(project.poster_s3_key)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        try:
+            delete_object(old_s3_key)
         except Exception:
             pass
-        project.poster_s3_key = None
-        db.commit()

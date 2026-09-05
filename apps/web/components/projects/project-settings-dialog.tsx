@@ -3,7 +3,7 @@
 import * as React from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Switch from '@radix-ui/react-switch'
-import { X, ImagePlus, Globe, Lock } from 'lucide-react'
+import { X, ImagePlus, Globe, Lock, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
@@ -30,7 +30,7 @@ export function ProjectSettingsDialog({
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
   const [pendingCrop, setPendingCrop] = React.useState<File | null>(null)
-  const [removePoster, setRemovePoster] = React.useState(false)
+  const [useAutomaticCover, setUseAutomaticCover] = React.useState(false)
   const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
@@ -44,7 +44,7 @@ export function ProjectSettingsDialog({
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
     setPendingCrop(null)
-    setRemovePoster(false)
+    setUseAutomaticCover(false)
     setSaveError(null)
   }, [project.id, open])
 
@@ -53,8 +53,8 @@ export function ProjectSettingsDialog({
     if (!file) return
     e.target.value = ''
     if (file.type === 'image/gif') {
-      setRemovePoster(false)
       setPosterFile(file)
+      setUseAutomaticCover(false)
       setPosterPreview(URL.createObjectURL(file))
       return
     }
@@ -63,15 +63,9 @@ export function ProjectSettingsDialog({
 
   const handleCropConfirm = (file: File) => {
     setPendingCrop(null)
-    setRemovePoster(false)
     setPosterFile(file)
+    setUseAutomaticCover(false)
     setPosterPreview(URL.createObjectURL(file))
-  }
-
-  const handleUseAutomaticPoster = () => {
-    setPosterFile(null)
-    setRemovePoster(true)
-    setPosterPreview(null)
   }
 
   const handleSave = async () => {
@@ -90,22 +84,29 @@ export function ProjectSettingsDialog({
         name: name.trim(),
         description: description.trim() || null,
         is_public: isPublic,
-        restore_automatic_poster: removePoster,
+        restore_automatic_poster: useAutomaticCover,
       })
 
       onUpdated()
       onOpenChange(false)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : ''
-      setSaveError(message || 'Could not save project settings.')
+    } catch {
+      setSaveError('Could not save all changes. Some changes may have saved. Please try again.')
     } finally {
       setSaving(false)
     }
   }
 
+  const handleUseAutomaticCover = () => {
+    setUseAutomaticCover(true)
+    setPosterFile(null)
+    setPosterPreview(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const gradient = getGradientForProject(project.id)
 
   return (
+    <>
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
@@ -153,24 +154,21 @@ export function ProjectSettingsDialog({
                   className="hidden"
                   onChange={handlePosterSelect}
                 />
-                <div className="flex w-full flex-col gap-1.5">
-                  <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()}>
-                    <ImagePlus className="h-3.5 w-3.5" />
-                    {posterPreview ? 'Change cover' : 'Upload cover'}
-                  </Button>
-                  {(posterPreview || posterFile) && (
-                    <button
-                      type="button"
-                      onClick={handleUseAutomaticPoster}
-                      className="text-xs text-text-tertiary transition-colors hover:text-text-primary"
-                    >
-                      Use automatic thumbnail
-                    </button>
-                  )}
-                  {removePoster && (
-                    <p className="text-center text-xs text-text-tertiary">The automatic thumbnail will return when you save.</p>
-                  )}
-                </div>
+                {useAutomaticCover ? (
+                  <p className="text-xs text-text-tertiary">Automatic cover will appear after saving</p>
+                ) : project.poster_source === 'manual' || posterFile ? (
+                  <button
+                    type="button"
+                    onClick={handleUseAutomaticCover}
+                    disabled={saving}
+                    className="inline-flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Use automatic cover
+                  </button>
+                ) : project.poster_source === 'automatic' ? (
+                  <p className="text-xs text-text-tertiary">Automatic video cover</p>
+                ) : null}
 
                 {/* Project name input */}
                 <input
@@ -249,11 +247,12 @@ export function ProjectSettingsDialog({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
-      <ProjectPosterCropDialog
-        file={pendingCrop}
-        onCancel={() => setPendingCrop(null)}
-        onConfirm={handleCropConfirm}
-      />
     </Dialog.Root>
+    <ProjectPosterCropDialog
+      file={pendingCrop}
+      onCancel={() => setPendingCrop(null)}
+      onConfirm={handleCropConfirm}
+    />
+    </>
   )
 }

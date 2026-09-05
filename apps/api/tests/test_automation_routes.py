@@ -261,7 +261,7 @@ def test_comment_export_excludes_resolved_instructions():
     version_id = uuid.uuid4()
     asset = MagicMock(project_id=actor.project_id)
     open_comment = MagicMock(
-        id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="clip 1: start here",
+        id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="clip 1: start",
         timecode_start=10, timecode_end=None, resolved=False, visibility="project", created_at=None,
     )
     resolved_comment = MagicMock(
@@ -278,6 +278,19 @@ def test_comment_export_excludes_resolved_instructions():
     result = automation_module.list_comments(asset_id, version_id, db, actor)
 
     assert [item["id"] for item in result] == [open_comment.id]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["CLIP 1: START", "clip 2: end", " Clip 3: start here ", "clip 4: END HERE"],
+)
+def test_clip_instruction_parser_accepts_short_or_long_edges(body):
+    assert automation_module._CLIP_INSTRUCTION.match(body)
+
+
+@pytest.mark.parametrize("body", ["clip 1: beginning", "clip 2: end now", "my clip 3: start"])
+def test_clip_instruction_parser_rejects_non_instruction_text(body):
+    assert automation_module._CLIP_INSTRUCTION.match(body) is None
 
 
 def test_comment_export_rejects_a_version_from_another_asset():
