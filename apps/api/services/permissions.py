@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 import uuid
 from ..models.user import User
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.project_folder import ProjectFolder, ProjectFolderScope, ProjectFolderShare
+from ..models.workspace import WorkspaceMember
 from ..models.asset import Asset
 from ..models.folder import Folder
 from ..models.share import AssetShare, ShareLink, ShareLinkItem, SharePermission
@@ -19,6 +21,55 @@ def get_project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID) -
     ).first()
 
 
+ROLE_RANK = {ProjectRole.owner: 4, ProjectRole.editor: 3, ProjectRole.reviewer: 2, ProjectRole.viewer: 1}
+
+
+def get_effective_project_role(db: Session, project_id: uuid.UUID, user: User) -> ProjectRole | None:
+    """Resolve direct, public, and inherited project-folder access.
+
+    Direct membership remains separate because owner-only mutations and
+    automation credentials must never be authorized by a folder share.
+    """
+    direct = get_project_member(db, project_id, user.id)
+    best = direct.role if direct else None
+    project = db.query(Project).filter(Project.id == project_id, Project.deleted_at.is_(None)).first()
+    if not project:
+        return None
+    if project.is_public and (best is None or ROLE_RANK[ProjectRole.viewer] > ROLE_RANK[best]):
+        best = ProjectRole.viewer
+    current_id = project.project_folder_id
+    visited: set[uuid.UUID] = set()
+    while current_id and current_id not in visited:
+        visited.add(current_id)
+        folder = db.query(ProjectFolder).filter(ProjectFolder.id == current_id, ProjectFolder.deleted_at.is_(None)).first()
+        if not folder:
+            break
+        role = None
+        if folder.owner_id == user.id:
+            role = ProjectRole.editor
+        elif folder.scope == ProjectFolderScope.workspace:
+            workspace_member = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == folder.workspace_id, WorkspaceMember.user_id == user.id, WorkspaceMember.deleted_at.is_(None)).first()
+            if workspace_member:
+                role = ProjectRole.viewer
+        elif folder.scope == ProjectFolderScope.shared:
+            share = db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id == folder.id, ProjectFolderShare.user_id == user.id, ProjectFolderShare.deleted_at.is_(None)).first()
+            if share:
+                role = share.role
+        if role and (best is None or ROLE_RANK[role] > ROLE_RANK[best]):
+            best = role
+        if folder.is_private:
+            break
+        current_id = folder.parent_id
+    return best
+
+
+def require_effective_project_role(db: Session, project_id: uuid.UUID, user: User, minimum_role: ProjectRole) -> ProjectRole:
+    role = get_effective_project_role(db, project_id, user)
+    if not role or ROLE_RANK[role] < ROLE_RANK[minimum_role]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires project access")
+    return role
+
+
 def require_project_role(
     db: Session,
     project_id: uuid.UUID,
@@ -29,12 +80,6 @@ def require_project_role(
 
     Role hierarchy (descending): owner > editor > reviewer > viewer
     """
-    ROLE_RANK = {
-        ProjectRole.owner: 4,
-        ProjectRole.editor: 3,
-        ProjectRole.reviewer: 2,
-        ProjectRole.viewer: 1,
-    }
     member = get_project_member(db, project_id, user.id)
     if not member:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
@@ -59,25 +104,17 @@ def is_public_project(db: Session, project_id: uuid.UUID) -> bool:
 
 def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
     """Check if user can access the asset via any path."""
-    # 1. Asset creator
-    if asset.created_by == user.id:
+    # Project-derived access is always current, including for the uploader.
+    if get_effective_project_role(db, asset.project_id, user):
         return True
 
-    # 2. Project member
-    if get_project_member(db, asset.project_id, user.id):
-        return True
-
-    # 3. Direct AssetShare with user
+    # Direct asset shares remain independent of project-folder access.
     direct = db.query(AssetShare).filter(
         AssetShare.asset_id == asset.id,
         AssetShare.shared_with_user_id == user.id,
         AssetShare.deleted_at.is_(None),
     ).first()
     if direct:
-        return True
-
-    # 4. Public project — any authenticated user can view
-    if is_public_project(db, asset.project_id):
         return True
 
     return False
