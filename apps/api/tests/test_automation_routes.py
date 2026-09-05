@@ -291,3 +291,60 @@ def test_comment_export_rejects_a_version_from_another_asset():
         automation_module.list_comments(uuid.uuid4(), uuid.uuid4(), db, actor)
 
     assert error.value.status_code == 404
+
+
+def test_review_version_matches_current_viewable_version():
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    asset = MagicMock(project_id=actor.project_id)
+    version = MagicMock(
+        id=uuid.uuid4(), version_number=2, processing_status=ProcessingStatus.ready
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.order_by.return_value = db
+    db.first.side_effect = [asset, version]
+
+    result = automation_module.get_review_version(asset_id, db, actor)
+
+    assert result["id"] == version.id
+    assert result["version_number"] == 2
+
+
+def test_review_version_falls_back_after_no_ready_version():
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    asset = MagicMock(project_id=actor.project_id)
+    processing_version = MagicMock(
+        id=uuid.uuid4(), version_number=3, processing_status=ProcessingStatus.processing
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.order_by.return_value = db
+    db.first.side_effect = [asset, None, processing_version]
+
+    result = automation_module.get_review_version(asset_id, db, actor)
+
+    assert result["id"] == processing_version.id
+    assert db.first.call_count == 3
+
+
+def test_review_version_falls_back_to_the_newest_version_when_needed():
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    asset = MagicMock(project_id=actor.project_id)
+    uploading_version = MagicMock(
+        id=uuid.uuid4(), version_number=3, processing_status=ProcessingStatus.uploading
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.order_by.return_value = db
+    db.first.side_effect = [asset, None, None, uploading_version]
+
+    result = automation_module.get_review_version(asset_id, db, actor)
+
+    assert result["id"] == uploading_version.id
+    assert db.first.call_count == 4
