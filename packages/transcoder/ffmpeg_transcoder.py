@@ -57,6 +57,15 @@ class FFmpegTranscoder(BaseTranscoder):
         )
 
     @staticmethod
+    def _thumbnail_seek_seconds(duration_seconds: float | None) -> float:
+        """Pick a representative frame without sampling a title-card first frame."""
+        if not duration_seconds or duration_seconds <= 0:
+            return 5.0
+        if duration_seconds <= 1.0:
+            return 0.0
+        return round(min(duration_seconds - 0.5, max(1.0, min(30.0, duration_seconds * 0.1))), 3)
+
+    @staticmethod
     def _run(cmd: list[str], timeout: int | None = None, label: str = "ffmpeg") -> str:
         """Run a command, raising RuntimeError with stderr on failure.
 
@@ -218,23 +227,26 @@ class FFmpegTranscoder(BaseTranscoder):
 
             # 5. Generate and upload thumbnail (using streaming URL)
             thumb_path = work_dir / "thumb_0001.jpg"
+            thumbnail_seek = self._thumbnail_seek_seconds(meta.duration_seconds if meta else None)
             thumb_cmd = [
-                "ffmpeg", "-y", "-i", input_url,
-                "-vf", "fps=0.1", "-q:v", "2", "-frames:v", "1",
+                "ffmpeg", "-y", "-ss", str(thumbnail_seek), "-i", input_url,
+                "-q:v", "2", "-frames:v", "1",
                 str(work_dir / "thumb_%04d.jpg"),
             ]
             self._run(thumb_cmd, label="ffmpeg")
-            thumbnail_key = f"{job.output_s3_prefix}/thumbnail.jpg"
+            thumbnail_keys = []
             if thumb_path.exists():
+                thumbnail_key = f"{job.output_s3_prefix}/thumbnail.jpg"
                 self.s3.upload_file(
                     str(thumb_path), self.bucket, thumbnail_key,
                     ExtraArgs={"ContentType": "image/jpeg", "CacheControl": "max-age=86400"},
                 )
+                thumbnail_keys.append(thumbnail_key)
 
             return TranscodeResult(
                 success=True,
                 hls_prefix=job.output_s3_prefix,
-                thumbnail_keys=[thumbnail_key],
+                thumbnail_keys=thumbnail_keys,
                 duration_seconds=(meta.duration_seconds or None) if meta else None,
                 width=(meta.width or None) if meta else None,
                 height=(meta.height or None) if meta else None,

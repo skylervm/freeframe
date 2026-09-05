@@ -7,6 +7,7 @@ from ..models.asset import Asset
 from ..models.activity import Notification
 from ..models.comment import Comment
 from ..schemas.asset import NotificationResponse
+from ..services.permissions import can_access_asset
 import uuid
 
 router = APIRouter(tags=["notifications"])
@@ -32,13 +33,14 @@ def list_notifications(
         project_id = None
 
         if n.asset_id:
-            asset = db.query(Asset).filter(Asset.id == n.asset_id).first()
-            if asset:
-                asset_name = asset.name
-                project_id = asset.project_id
+            asset = db.query(Asset).filter(Asset.id == n.asset_id, Asset.deleted_at.is_(None)).first()
+            if not asset or not can_access_asset(db, asset, current_user):
+                continue
+            asset_name = asset.name
+            project_id = asset.project_id
 
         if n.comment_id:
-            comment = db.query(Comment).filter(Comment.id == n.comment_id).first()
+            comment = db.query(Comment).filter(Comment.id == n.comment_id, Comment.deleted_at.is_(None)).first()
             if comment:
                 comment_preview = comment.body[:100] if comment.body else None
                 # Get actor from comment author

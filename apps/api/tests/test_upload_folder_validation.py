@@ -32,7 +32,7 @@ def test_initiate_upload_rejects_soft_deleted_or_foreign_folder(
 ):
     # Bypass the upstream gates so we isolate the folder-validation path.
     monkeypatch.setattr(upload_module, "upload_guard_error", lambda db, n: None)
-    monkeypatch.setattr(upload_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(upload_module, "require_effective_project_role", lambda db, pid, u, r: None)
 
     project = MagicMock()
     # Query sequence inside initiate_upload after the gates are bypassed:
@@ -51,7 +51,7 @@ def test_initiate_upload_allows_valid_folder(
 ):
     """Sanity check: a real, project-owned, non-deleted folder is accepted."""
     monkeypatch.setattr(upload_module, "upload_guard_error", lambda db, n: None)
-    monkeypatch.setattr(upload_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(upload_module, "require_effective_project_role", lambda db, pid, u, r: None)
     monkeypatch.setattr(
         upload_module, "create_multipart_upload", lambda s3_key, mime_type: "fake-upload-id"
     )
@@ -60,8 +60,8 @@ def test_initiate_upload_allows_valid_folder(
     folder = MagicMock()
 
     # Query sequence: project lookup -> project, folder lookup -> folder,
-    # then last_version lookup -> None (first version).
-    mock_db.first.side_effect = [project, folder, None]
+    # version-allocation lock -> asset, then last_version -> None.
+    mock_db.first.side_effect = [project, folder, MagicMock(), None]
 
     def _add(obj):
         # Emulate the DB assigning identity/attrs to the asset/version on add+flush.
@@ -84,7 +84,7 @@ def test_initiate_upload_new_version_ignores_bad_folder(
     data-loss risk in this branch.
     """
     monkeypatch.setattr(upload_module, "upload_guard_error", lambda db, n: None)
-    monkeypatch.setattr(upload_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(upload_module, "require_effective_project_role", lambda db, pid, u, r: None)
     monkeypatch.setattr(
         upload_module, "create_multipart_upload", lambda s3_key, mime_type: "fake-upload-id"
     )
@@ -101,8 +101,9 @@ def test_initiate_upload_new_version_ignores_bad_folder(
     # Query sequence for the asset_id (new-version) branch:
     #   1) project lookup -> project
     #   2) asset lookup -> asset  (NO folder lookup happens in this branch)
-    #   3) last_version lookup -> None (first version for this asset)
-    mock_db.first.side_effect = [project, asset, None]
+    #   3) version-allocation lock -> asset
+    #   4) last_version lookup -> None (first version for this asset)
+    mock_db.first.side_effect = [project, asset, asset, None]
 
     def _add(obj):
         if not hasattr(obj, "id") or obj.id is None:

@@ -489,21 +489,24 @@ export default function ProjectDetailPage() {
                 <LinkIcon className="h-4 w-4" />
                 <span>All Share Links ({shareLinks.length})</span>
               </button>
-              {shareLinks.map((link) => (
+              {shareLinks.map((link) => {
+                const canManageLink = Boolean(link.token);
+                return (
                 <div
-                  key={link.token}
+                  key={link.id}
                   className={cn(
-                    "group w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors cursor-pointer",
-                    selectedShareLink === link.token
+                    "group w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm transition-colors",
+                    canManageLink && "cursor-pointer hover:bg-bg-hover hover:text-text-primary",
+                    canManageLink && selectedShareLink === link.token
                       ? "bg-bg-hover text-text-primary"
-                      : "text-text-secondary hover:bg-bg-hover hover:text-text-primary",
+                      : "text-text-secondary",
                   )}
-                  onClick={() => {
+                  onClick={canManageLink ? () => {
                     setShowShareLinks(true);
-                    setSelectedShareLink(link.token);
+                    setSelectedShareLink(link.token!);
                     setShowTrash(false);
                     setCurrentFolderId(null);
-                  }}
+                  } : undefined}
                 >
                   {link.share_type === "folder" ? (
                     <FolderIcon className="h-4 w-4 shrink-0" />
@@ -513,7 +516,7 @@ export default function ProjectDetailPage() {
                   <span className="truncate flex-1">
                     {link.title || link.target_name}
                   </span>
-                  <DropdownMenu.Root>
+                  {canManageLink && <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
                       <button
                         className="h-5 w-5 flex items-center justify-center rounded text-text-tertiary hover:text-text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
@@ -534,7 +537,7 @@ export default function ProjectDetailPage() {
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
                           onSelect={() =>
                             window.open(
-                              `${window.location.origin}/share/${link.token}`,
+                              `${window.location.origin}/share/${link.token!}`,
                               "_blank",
                             )
                           }
@@ -546,7 +549,7 @@ export default function ProjectDetailPage() {
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
                           onSelect={() =>
                             navigator.clipboard.writeText(
-                              `${window.location.origin}/share/${link.token}`,
+                              `${window.location.origin}/share/${link.token!}`,
                             )
                           }
                         >
@@ -557,7 +560,7 @@ export default function ProjectDetailPage() {
                         <DropdownMenu.Item
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
                           onSelect={() =>
-                            toggleEnabled(link.token, !link.is_enabled)
+                            toggleEnabled(link.token!, !link.is_enabled)
                           }
                         >
                           <MinusCircle className="h-4 w-4 text-text-tertiary" />
@@ -566,7 +569,7 @@ export default function ProjectDetailPage() {
                         <DropdownMenu.Item
                           className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-status-error hover:bg-status-error/10 cursor-pointer outline-none transition-colors"
                           onSelect={async () => {
-                            await deleteShareLink(link.token);
+                            await deleteShareLink(link.token!);
                             if (selectedShareLink === link.token)
                               setSelectedShareLink(null);
                           }}
@@ -576,9 +579,13 @@ export default function ProjectDetailPage() {
                         </DropdownMenu.Item>
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
+                  </DropdownMenu.Root>}
+                  {!canManageLink && (
+                    <span className="text-xs text-text-tertiary shrink-0">Read only</span>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>}

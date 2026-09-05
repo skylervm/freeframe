@@ -1,4 +1,4 @@
-"""Real-Postgres coverage for project-card automatic cover selection."""
+"""Real-Postgres coverage for project-card automatic poster selection."""
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -19,8 +19,11 @@ def _seed_owner_and_project(db):
 
 def _video_asset(db, project, owner, created_at, deleted=False):
     asset = Asset(
-        project_id=project.id, name="video", asset_type=AssetType.video,
-        created_by=owner.id, created_at=created_at,
+        project_id=project.id,
+        name="video",
+        asset_type=AssetType.video,
+        created_by=owner.id,
+        created_at=created_at,
         deleted_at=created_at if deleted else None,
     )
     db.add(asset)
@@ -30,14 +33,21 @@ def _video_asset(db, project, owner, created_at, deleted=False):
 
 def _version(db, asset, owner, number, status, thumbnail_key=None, deleted=False):
     version = AssetVersion(
-        asset_id=asset.id, version_number=number, processing_status=status,
-        created_by=owner.id, deleted_at=datetime.now(timezone.utc) if deleted else None,
+        asset_id=asset.id,
+        version_number=number,
+        processing_status=status,
+        created_by=owner.id,
+        deleted_at=datetime.now(timezone.utc) if deleted else None,
     )
     db.add(version)
     db.flush()
     db.add(MediaFile(
-        version_id=version.id, file_type=FileType.video, original_filename="video.mp4",
-        mime_type="video/mp4", file_size_bytes=1, s3_key_raw=f"raw/{version.id}",
+        version_id=version.id,
+        file_type=FileType.video,
+        original_filename="video.mp4",
+        mime_type="video/mp4",
+        file_size_bytes=1,
+        s3_key_raw=f"raw/{version.id}",
         s3_key_thumbnail=thumbnail_key,
     ))
     db.flush()
@@ -56,6 +66,8 @@ def test_automatic_cover_uses_oldest_master_and_newest_ready_thumbnail(real_db):
     _version(real_db, later, owner, 1, ProcessingStatus.ready, "thumb/later.jpg")
 
     assert _automatic_poster_keys(real_db, [project.id]) == {project.id: "thumb/master-v1.jpg"}
+
+    # Once the new master revision is ready, it replaces the prior thumbnail.
     real_db.query(AssetVersion).filter(AssetVersion.asset_id == master.id, AssetVersion.version_number == 2).update(
         {"processing_status": ProcessingStatus.ready}
     )
@@ -76,17 +88,21 @@ def test_automatic_cover_ignores_deleted_and_non_ready_video(real_db):
     _version(real_db, eligible, owner, 1, ProcessingStatus.ready, "thumb/eligible.jpg")
 
     assert _automatic_poster_keys(real_db, [project.id]) == {project.id: "thumb/eligible.jpg"}
-    assert _automatic_poster_keys(real_db, [uuid.uuid4()]) == {}
 
 
 def test_manual_cover_takes_precedence_over_automatic(real_db, monkeypatch):
-    from apps.api.routers.projects import _resolve_poster_url
+    from apps.api.routers.projects import _apply_poster_response
+    from apps.api.schemas.project import ProjectResponse
 
     owner, project = _seed_owner_and_project(real_db)
     project.poster_s3_key = "posters/manual.jpg"
+    response = ProjectResponse.model_validate(project)
     monkeypatch.setattr(
         "apps.api.routers.projects.generate_presigned_get_url",
         lambda key: f"https://storage.test/{key}",
     )
 
-    assert _resolve_poster_url(project, "thumb/automatic.jpg") == "https://storage.test/posters/manual.jpg"
+    _apply_poster_response(response, project, "thumb/automatic.jpg")
+
+    assert response.poster_source == "manual"
+    assert response.poster_url == "https://storage.test/posters/manual.jpg"

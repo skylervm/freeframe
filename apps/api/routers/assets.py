@@ -10,11 +10,12 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
 from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.trash import TrashEntityType, TrashOperation
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse
 from ..schemas.notification import AssignmentUpdate
-from ..services.permissions import require_project_role, require_asset_access, can_access_asset, is_public_project, get_project_member
+from ..services.permissions import require_effective_project_role, require_asset_access, can_access_asset, get_effective_project_role
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, mime_to_asset_type
@@ -167,9 +168,7 @@ def list_assets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Allow access if user is a project member OR the project is public
-    member = get_project_member(db, project_id, current_user.id)
-    if not member and not is_public_project(db, project_id):
+    if not get_effective_project_role(db, project_id, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
 
     query = db.query(Asset).filter(
@@ -231,7 +230,7 @@ def update_asset(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
     for field, value in body.model_dump(exclude_unset=True).items():
         setattr(asset, field, value)
     db.commit()
@@ -248,8 +247,26 @@ def delete_asset(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
-    asset.deleted_at = datetime.now(timezone.utc)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    owner = db.query(ProjectMember).filter(
+        ProjectMember.project_id == asset.project_id,
+        ProjectMember.role == ProjectRole.owner,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not owner:
+        raise HTTPException(status_code=409, detail="Project has no active owner")
+    now = datetime.now(timezone.utc)
+    operation = TrashOperation(
+        entity_type=TrashEntityType.asset,
+        entity_id=asset.id,
+        deleted_by_id=current_user.id,
+        project_id=asset.project_id,
+        deleted_at=now,
+    )
+    db.add(operation)
+    db.flush()
+    asset.deleted_at = now
+    asset.trash_operation_id = operation.id
     db.commit()
 
 
@@ -354,7 +371,7 @@ def initiate_new_version(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
 
     if body.mime_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported file type")
@@ -417,7 +434,7 @@ def update_assignment(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
 
     if "assignee_id" in body.model_fields_set:
         asset.assignee_id = body.assignee_id
@@ -446,7 +463,7 @@ def get_assignment(
     asset = db.query(Asset).filter(Asset.id == asset_id, Asset.deleted_at.is_(None)).first()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    require_project_role(db, asset.project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.viewer)
     return {
         "assignee_id": str(asset.assignee_id) if asset.assignee_id else None,
         "due_date": asset.due_date.isoformat() if asset.due_date else None,

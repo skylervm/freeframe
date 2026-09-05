@@ -512,7 +512,10 @@ def delete_prefix(prefix: str) -> None:
         objects = [{"Key": o["Key"]} for o in resp.get("Contents", [])]
         if objects:
             try:
-                s3.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": objects})
+                delete_response = s3.delete_objects(Bucket=settings.s3_bucket, Delete={"Objects": objects})
+                if delete_response.get("Errors"):
+                    failed = ", ".join(error.get("Key", "unknown") for error in delete_response["Errors"])
+                    raise RuntimeError(f"S3 prefix delete failed for: {failed}")
             except ClientError as e:
                 # botocore >=1.36 sends a CRC32 data-integrity checksum on batch DeleteObjects
                 # instead of the legacy Content-MD5 header. S3-compatible backends that predate

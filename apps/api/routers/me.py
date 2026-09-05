@@ -9,12 +9,13 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset
 from ..models.folder import Folder
-from ..models.project import Project, ProjectMember
+from ..models.project import Project
 from ..models.share import AssetShare
 from ..models.activity import Mention, Notification
 from ..models.comment import Comment
 from ..schemas.asset import AssetResponse, NotificationResponse
 from ..routers.assets import _build_asset_response, _build_asset_responses_bulk
+from ..services.permissions import get_accessible_project_roles
 from ..services.search import escape_like
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -29,19 +30,31 @@ def list_my_assets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    accessible_project_ids = list(get_accessible_project_roles(db, current_user))
+    directly_shared_asset_ids = db.query(AssetShare.asset_id).filter(
+        AssetShare.shared_with_user_id == current_user.id,
+        AssetShare.deleted_at.is_(None),
+        AssetShare.asset_id.in_(
+            db.query(Asset.id).join(Project, Project.id == Asset.project_id).filter(
+                Project.deleted_at.is_(None),
+            )
+        ),
+    ).subquery()
+    access_filter = or_(
+        Asset.project_id.in_(accessible_project_ids),
+        Asset.id.in_(directly_shared_asset_ids),
+    )
+
     if filter == "owned":
         query = db.query(Asset).filter(
             Asset.created_by == current_user.id,
             Asset.deleted_at.is_(None),
+            access_filter,
         )
 
     elif filter == "shared":
-        shared_ids = db.query(AssetShare.asset_id).filter(
-            AssetShare.shared_with_user_id == current_user.id,
-            AssetShare.deleted_at.is_(None),
-        ).subquery()
         query = db.query(Asset).filter(
-            Asset.id.in_(shared_ids),
+            Asset.id.in_(directly_shared_asset_ids),
             Asset.deleted_at.is_(None),
         )
 
@@ -59,12 +72,17 @@ def list_my_assets(
             .all()
         )
         ids = [r[0] for r in mentioned_asset_ids]
-        query = db.query(Asset).filter(Asset.id.in_(ids), Asset.deleted_at.is_(None))
+        query = db.query(Asset).filter(
+            Asset.id.in_(ids),
+            Asset.deleted_at.is_(None),
+            access_filter,
+        )
 
     elif filter == "assigned":
         query = db.query(Asset).filter(
             Asset.assignee_id == current_user.id,
             Asset.deleted_at.is_(None),
+            access_filter,
         )
 
     elif filter == "due_soon":
@@ -74,26 +92,14 @@ def list_my_assets(
             Asset.due_date.isnot(None),
             Asset.due_date <= now + timedelta(days=7),
             Asset.deleted_at.is_(None),
+            access_filter,
         )
 
     else:
-        # All accessible: member of project OR directly shared OR assigned
-        project_ids = db.query(ProjectMember.project_id).filter(
-            ProjectMember.user_id == current_user.id,
-            ProjectMember.deleted_at.is_(None),
-        ).subquery()
-        shared_ids = db.query(AssetShare.asset_id).filter(
-            AssetShare.shared_with_user_id == current_user.id,
-            AssetShare.deleted_at.is_(None),
-        ).subquery()
+        # All accessible: effective project role or a direct asset share.
         query = db.query(Asset).filter(
             Asset.deleted_at.is_(None),
-        ).filter(
-            or_(
-                Asset.project_id.in_(project_ids),
-                Asset.id.in_(shared_ids),
-                Asset.assignee_id == current_user.id,
-            )
+            access_filter,
         )
 
     # Apply search filter
@@ -112,10 +118,7 @@ def search_my_folders(
     current_user: User = Depends(get_current_user),
 ):
     """Search folders across all projects the user has access to."""
-    project_ids = db.query(ProjectMember.project_id).filter(
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.deleted_at.is_(None),
-    ).subquery()
+    project_ids = list(get_accessible_project_roles(db, current_user))
 
     query = db.query(Folder).filter(
         Folder.project_id.in_(project_ids),

@@ -18,7 +18,7 @@ from ..services.s3_service import (
     list_upload_parts, head_object_size, UPLOAD_GONE_CODES,
     MultipartUploadGone, MultipartListingUnsupported,
 )
-from ..services.permissions import get_project_member, require_project_role
+from ..services.permissions import require_effective_project_role
 from ..models.project import ProjectRole
 from ..schemas.upload import (
     InitiateUploadRequest, InitiateUploadResponse,
@@ -32,6 +32,13 @@ logger = logging.getLogger(__name__)
 _MULTIPART_CHUNK_BYTES = 10 * 1024 * 1024
 
 router = APIRouter(prefix="/upload", tags=["upload"])
+
+
+def _require_upload_access(db: Session, version: AssetVersion, user: User) -> None:
+    asset = db.query(Asset).filter(Asset.id == version.asset_id, Asset.deleted_at.is_(None)).first()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    require_effective_project_role(db, asset.project_id, user, ProjectRole.editor)
 
 def _initiate_upload(
     body: InitiateUploadRequest,
@@ -53,7 +60,7 @@ def _initiate_upload(
     project = db.query(Project).filter(Project.id == body.project_id, Project.deleted_at.is_(None)).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    require_project_role(db, body.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, body.project_id, current_user, ProjectRole.editor)
 
     # Get or create asset
     if body.asset_id:
@@ -189,6 +196,7 @@ def presign_part(
     ).first()
     if not version or version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
+    _require_upload_access(db, version, current_user)
 
     # Sign only the upload this version actually belongs to. Previously whatever
     # upload id the caller sent was passed straight to the signer, because there
@@ -308,6 +316,7 @@ def complete_upload(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
+    _require_upload_access(db, version, current_user)
     if body.asset_id != version.asset_id:
         raise HTTPException(status_code=400, detail="Asset does not match this version")
     if (
@@ -443,6 +452,7 @@ def abort_upload(
         raise HTTPException(status_code=404, detail="Version not found")
     if version.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized for this upload")
+    _require_upload_access(db, version, current_user)
 
     # A completion replay may call abort after the version is already processing.
     # It cannot change that state, so avoid touching storage or requiring a media

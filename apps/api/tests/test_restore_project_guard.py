@@ -16,7 +16,7 @@ import apps.api.routers.folders as folders_module
 def test_restore_asset_rejects_soft_deleted_project(
     client, auth_headers, mock_db, test_user, monkeypatch
 ):
-    monkeypatch.setattr(folders_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(folders_module, "require_effective_project_role", lambda db, pid, u, r: None)
 
     project_id = uuid.uuid4()
     asset = MagicMock()
@@ -26,7 +26,7 @@ def test_restore_asset_rejects_soft_deleted_project(
     project = MagicMock()
     project.deleted_at = datetime.now(timezone.utc)  # soft-deleted
 
-    # Query sequence in restore_asset after require_project_role is bypassed:
+    # Query sequence in restore_asset after permission is bypassed:
     #   1) asset lookup -> asset (soft-deleted)
     #   2) project lookup -> project (soft-deleted)
     mock_db.first.side_effect = [asset, project]
@@ -40,7 +40,7 @@ def test_restore_asset_rejects_soft_deleted_project(
 def test_restore_folder_rejects_soft_deleted_project(
     client, auth_headers, mock_db, test_user, monkeypatch
 ):
-    monkeypatch.setattr(folders_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(folders_module, "require_effective_project_role", lambda db, pid, u, r: None)
 
     project_id = uuid.uuid4()
     folder = MagicMock()
@@ -50,7 +50,7 @@ def test_restore_folder_rejects_soft_deleted_project(
     project = MagicMock()
     project.deleted_at = datetime.now(timezone.utc)  # soft-deleted
 
-    # Query sequence in restore_folder after require_project_role is bypassed:
+    # Query sequence in restore_folder after permission is bypassed:
     #   1) folder lookup -> folder (soft-deleted)
     #   2) project lookup -> project (soft-deleted)
     mock_db.first.side_effect = [folder, project]

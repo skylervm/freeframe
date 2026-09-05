@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
+from typing import Literal
 from ..models.project import ProjectType, ProjectRole
 
 class ProjectCreate(BaseModel):
@@ -20,8 +21,10 @@ class ProjectResponse(BaseModel):
     description: str | None
     project_type: ProjectType
     created_by: uuid.UUID
+    project_folder_id: uuid.UUID | None = None
     created_at: datetime
     poster_url: str | None = None
+    poster_source: Literal["manual", "automatic"] | None = None
     is_public: bool = False
     asset_count: int = 0
     storage_bytes: int = 0

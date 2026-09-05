@@ -85,10 +85,12 @@ export interface Project {
   name: string;
   description: string | null;
   created_by: string;
+  project_folder_id?: string | null;
   org_id?: string;
   project_type: ProjectType;
   team_id?: string | null;
   poster_url?: string | null;
+  poster_source?: "manual" | "automatic" | null;
   is_public?: boolean;
   created_at: string;
   deleted_at: string | null;
@@ -266,7 +268,7 @@ export interface ShareLink {
   asset_id: string | null;
   folder_id: string | null;
   project_id: string | null;
-  token: string;
+  token: string | null;
   title: string;
   description: string | null;
   created_by: string;
@@ -297,7 +299,7 @@ export interface AssetShare {
 
 export interface ShareLinkListItem {
   id: string
-  token: string
+  token: string | null
   title: string
   description: string | null
   is_enabled: boolean

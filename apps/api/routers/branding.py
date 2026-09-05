@@ -16,7 +16,7 @@ from ..schemas.branding import (
     WatermarkResponse,
     WatermarkImageUploadResponse,
 )
-from ..services.permissions import require_project_role, require_asset_access
+from ..services.permissions import require_effective_project_role, require_asset_access
 from ..services import s3_service
 from ..config import settings
 
@@ -68,7 +68,7 @@ def get_branding(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     branding = _get_or_create_branding(db, project_id)
     return _branding_to_response(branding)
 
@@ -80,7 +80,7 @@ def upsert_branding(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     branding = _get_or_create_branding(db, project_id)
     update_data = body.model_dump(exclude_none=True)
     for field, value in update_data.items():
@@ -100,7 +100,7 @@ def get_logo_upload_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     key = f"branding/{project_id}/logo/{uuid.uuid4()}.webp"
     upload_url = s3_service.get_s3_client().generate_presigned_url(
         "put_object",
@@ -122,7 +122,7 @@ def get_watermark(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
     wm = _get_or_create_watermark(db, project_id)
     return WatermarkResponse.model_validate(wm)
 
@@ -134,7 +134,7 @@ def upsert_watermark(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     wm = _get_or_create_watermark(db, project_id)
     update_data = body.model_dump(exclude_none=True)
     for field, value in update_data.items():
@@ -154,7 +154,7 @@ def get_watermark_image_upload_url(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
     key = f"branding/{project_id}/watermark/{uuid.uuid4()}.png"
     upload_url = s3_service.get_s3_client().generate_presigned_url(
         "put_object",
@@ -180,7 +180,7 @@ def apply_watermark_to_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
 
     wm = db.query(WatermarkSettings).filter(
         WatermarkSettings.project_id == asset.project_id,
