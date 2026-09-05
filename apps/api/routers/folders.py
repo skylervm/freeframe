@@ -20,7 +20,7 @@ from ..schemas.folder import (
     FolderTreeNode,
     FolderUpdate,
 )
-from ..services.permissions import require_project_role, get_project_member, is_public_project
+from ..services.permissions import require_effective_project_role, get_effective_project_role
 
 router = APIRouter(tags=["folders"])
 
@@ -142,7 +142,7 @@ def create_folder(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
 
     # Validate parent exists and belongs to project
     if body.parent_id:
@@ -176,9 +176,7 @@ def list_folders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Allow access if user is a project member OR the project is public
-    member = get_project_member(db, project_id, current_user.id)
-    if not member and not is_public_project(db, project_id):
+    if not get_effective_project_role(db, project_id, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
 
     query = db.query(Folder).filter(
@@ -201,9 +199,7 @@ def get_folder_tree(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Allow access if user is a project member OR the project is public
-    member = get_project_member(db, project_id, current_user.id)
-    if not member and not is_public_project(db, project_id):
+    if not get_effective_project_role(db, project_id, current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
 
     all_folders = (
@@ -257,7 +253,7 @@ def update_folder(
     current_user: User = Depends(get_current_user),
 ):
     folder = _get_folder(db, folder_id)
-    require_project_role(db, folder.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.editor)
 
     if body.name is not None:
         folder.name = body.name
@@ -295,7 +291,7 @@ def delete_folder(
     current_user: User = Depends(get_current_user),
 ):
     folder = _get_folder(db, folder_id)
-    require_project_role(db, folder.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.editor)
 
     now = datetime.now(timezone.utc)
 
@@ -326,7 +322,7 @@ def move_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
 
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
 
     if body.folder_id is not None:
         target = _get_folder(db, body.folder_id)
@@ -345,7 +341,7 @@ def bulk_move(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
 
     # Validate target folder
     if body.target_folder_id is not None:
@@ -411,7 +407,7 @@ def list_trash(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.editor)
 
     deleted_folders = (
         db.query(Folder)
@@ -465,7 +461,7 @@ def restore_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Deleted asset not found")
 
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.editor)
 
     # A deleted project has no restore path, so restoring an asset into a soft-deleted project would be
     # a false success — the retention GC's project cascade would silently hard-delete it. Refuse.
@@ -498,7 +494,7 @@ def restore_folder(
     if not folder:
         raise HTTPException(status_code=404, detail="Deleted folder not found")
 
-    require_project_role(db, folder.project_id, current_user, ProjectRole.editor)
+    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.editor)
 
     project = db.query(Project).filter(Project.id == folder.project_id).first()
     if project is None or project.deleted_at is not None:

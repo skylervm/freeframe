@@ -15,6 +15,8 @@ from apps.api.models.share import ShareLink, ShareLinkItem, ShareLinkActivity, A
 from apps.api.models.metadata import MetadataField, AssetMetadata, Collection, CollectionShare, FieldType
 from apps.api.models.branding import ProjectBranding, WatermarkSettings
 from apps.api.models.activity import Mention, ActivityLog, Notification, NotificationType
+from apps.api.models.project_folder import PersonalProjectPlacement, ProjectFolder, ProjectFolderScope
+from apps.api.models.workspace import Workspace
 
 
 # ── seed helpers (module-level; extended by later tasks) ─────────────────────────
@@ -281,6 +283,21 @@ def test_purge_project_removes_everything(real_db, monkeypatch):
     real_db.add(ProjectBranding(project_id=project.id, logo_s3_key="branding/logo.png"))
     real_db.add(WatermarkSettings(project_id=project.id))
     real_db.add(ProjectMember(project_id=project.id, user_id=owner.id))
+    workspace = Workspace(name=f"gc-workspace-{uuid.uuid4()}")
+    real_db.add(workspace); real_db.flush()
+    project_folder = ProjectFolder(
+        workspace_id=workspace.id,
+        owner_id=owner.id,
+        created_by=owner.id,
+        name=f"gc-folder-{uuid.uuid4()}",
+        scope=ProjectFolderScope.personal,
+    )
+    real_db.add(project_folder); real_db.flush()
+    real_db.add(PersonalProjectPlacement(
+        user_id=owner.id,
+        project_id=project.id,
+        folder_id=project_folder.id,
+    ))
     coll = Collection(project_id=project.id, name="c", created_by=owner.id)
     real_db.add(coll); real_db.flush()
     real_db.add(CollectionShare(collection_id=coll.id, token=f"c-{uuid.uuid4()}", created_by=owner.id))
@@ -300,6 +317,7 @@ def test_purge_project_removes_everything(real_db, monkeypatch):
     assert real_db.query(ProjectBranding).filter_by(project_id=project.id).count() == 0
     assert real_db.query(WatermarkSettings).filter_by(project_id=project.id).count() == 0
     assert real_db.query(ProjectMember).filter_by(project_id=project.id).count() == 0
+    assert real_db.query(PersonalProjectPlacement).filter_by(project_id=project.id).count() == 0
     assert real_db.query(Collection).filter_by(project_id=project.id).count() == 0
     assert real_db.query(CollectionShare).filter_by(collection_id=coll.id).count() == 0
     assert real_db.query(MetadataField).filter_by(project_id=project.id).count() == 0
@@ -419,6 +437,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         "collection_shares", "share_link_items", "share_link_activity", "watermark_settings",
         "project_members", "project_brandings", "activity_logs", "annotations", "comment_attachments",
         "comment_reactions", "mentions", "notifications", "project_automation_tokens",
+        "personal_project_placements",
     }
     # (referencing_table, referencing_column) confirmed handled by a _purge_* helper.
     KNOWN_HANDLED = {
@@ -427,6 +446,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("project_brandings", "project_id"), ("watermark_settings", "project_id"),
         ("metadata_fields", "project_id"), ("collections", "project_id"),
             ("project_members", "project_id"), ("activity_logs", "project_id"),
+            ("personal_project_placements", "project_id"),
             ("project_automation_tokens", "project_id"),
             ("automation_bootstrap_requests", "project_id"),
             ("automation_bootstrap_renewals", "project_id"),

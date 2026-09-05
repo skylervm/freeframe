@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+import asyncio
 import uuid
 from typing import Optional
 from sqlalchemy.orm import Session
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..middleware.auth import get_current_user, get_optional_user
 from ..services.auth_service import decode_token, get_user_by_id
 from ..models.user import User, UserStatus
 from ..services.event_service import event_stream
-from ..services.permissions import get_project_member, is_public_project
+from ..services.permissions import get_effective_project_role
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -30,11 +31,28 @@ async def stream_events(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authenticated")
 
     # Verify user has access to this project
-    if not get_project_member(db, project_id, user.id) and not is_public_project(db, project_id):
+    if not get_effective_project_role(db, project_id, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
 
+    async def still_authorized() -> bool:
+        def check() -> bool:
+            stream_db = SessionLocal()
+            try:
+                active_user = stream_db.query(User).filter(
+                    User.id == user.id,
+                    User.deleted_at.is_(None),
+                    User.status != UserStatus.deactivated,
+                ).first()
+                return bool(active_user and get_effective_project_role(stream_db, project_id, active_user))
+            finally:
+                stream_db.close()
+        return await asyncio.to_thread(check)
+
     return StreamingResponse(
-        event_stream(str(project_id)),
+        event_stream(
+            str(project_id),
+            is_authorized=still_authorized,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

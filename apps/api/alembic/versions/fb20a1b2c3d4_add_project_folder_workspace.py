@@ -15,8 +15,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    workspace_role = sa.Enum("owner", "member", name="workspacerole")
-    folder_scope = sa.Enum("personal", "shared", "workspace", name="projectfolderscope")
+    workspace_role = postgresql.ENUM("owner", "member", name="workspacerole", create_type=False)
+    folder_scope = postgresql.ENUM("personal", "shared", "workspace", name="projectfolderscope", create_type=False)
     project_role = postgresql.ENUM("owner", "editor", "reviewer", "viewer", name="projectrole", create_type=False)
     workspace_role.create(op.get_bind(), checkfirst=True)
     folder_scope.create(op.get_bind(), checkfirst=True)
@@ -53,6 +53,8 @@ def upgrade() -> None:
     )
     op.create_index("ix_project_folders_workspace_id", "project_folders", ["workspace_id"])
     op.create_index("ix_project_folders_parent_id", "project_folders", ["parent_id"])
+    op.create_index("ix_project_folders_owner_id", "project_folders", ["owner_id"])
+    op.create_index("ix_project_folders_workspace_parent", "project_folders", ["workspace_id", "parent_id", "deleted_at"])
     op.create_index("uq_project_folder_name_per_parent", "project_folders", ["workspace_id", "parent_id", "owner_id", "name"], unique=True, postgresql_where=sa.text("deleted_at IS NULL"))
     op.create_table("project_folder_shares",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
@@ -64,6 +66,8 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True)),
     )
     op.create_index("uq_project_folder_share_active", "project_folder_shares", ["folder_id", "user_id"], unique=True, postgresql_where=sa.text("deleted_at IS NULL"))
+    op.create_index("ix_project_folder_shares_folder_id", "project_folder_shares", ["folder_id"])
+    op.create_index("ix_project_folder_shares_user_id", "project_folder_shares", ["user_id"])
     op.create_table("personal_project_placements",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False),
@@ -73,6 +77,9 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True)),
     )
     op.create_index("uq_personal_project_placement_active", "personal_project_placements", ["user_id", "project_id"], unique=True, postgresql_where=sa.text("deleted_at IS NULL"))
+    op.create_index("ix_personal_project_placements_user_id", "personal_project_placements", ["user_id"])
+    op.create_index("ix_personal_project_placements_project_id", "personal_project_placements", ["project_id"])
+    op.create_index("ix_personal_project_placements_folder_id", "personal_project_placements", ["folder_id"])
     op.add_column("projects", sa.Column("project_folder_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("project_folders.id")))
     op.create_index("ix_projects_project_folder_id", "projects", ["project_folder_id"])
 

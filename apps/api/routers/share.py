@@ -37,7 +37,7 @@ from ..schemas.share import (
     ShareVerifyRequest,
 )
 from ..services.permissions import (
-    require_project_role, validate_share_link, validate_share_link_with_session,
+    get_project_member, require_effective_project_role, require_project_role, validate_share_link, validate_share_link_with_session,
     validate_asset_in_share, enforce_share_link_visibility, _is_descendant_of,
 )
 from ..services.auth_service import bcrypt_password_bytes
@@ -208,11 +208,13 @@ def list_share_links(
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset(db, asset_id)
-    require_project_role(db, asset.project_id, current_user, ProjectRole.editor)
-    return db.query(ShareLink).filter(
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.viewer)
+    include_secret = _may_view_share_secret(db, asset.project_id, current_user)
+    links = db.query(ShareLink).filter(
         ShareLink.asset_id == asset_id,
         ShareLink.deleted_at.is_(None),
     ).all()
+    return [_share_link_response(link, include_secret=include_secret) for link in links]
 
 
 def _build_share_validate_response(
@@ -410,16 +412,23 @@ def verify_share_link_password(
     )
 
 
-def _share_link_response(link: ShareLink) -> ShareLinkResponse:
+def _share_link_response(link: ShareLink, include_secret: bool = True) -> ShareLinkResponse:
     """Build ShareLinkResponse from ORM model, computing has_password and decrypting password."""
     response = ShareLinkResponse.model_validate(link)
     response.has_password = link.password_hash is not None and link.password_hash != ''
-    if link.password_encrypted:
+    if include_secret and link.password_encrypted:
         try:
             response.password_value = decrypt_password(link.password_encrypted)
         except Exception:
             response.password_value = None
+    if not include_secret:
+        response.token = None
     return response
+
+
+def _may_view_share_secret(db: Session, project_id: uuid.UUID, user: User) -> bool:
+    member = get_project_member(db, project_id, user.id)
+    return bool(member and member.role in (ProjectRole.owner, ProjectRole.editor))
 
 
 # ── Authenticated share link details (for settings panel) ────────────────────
@@ -438,8 +447,8 @@ def get_share_link_details(
     if not link:
         raise HTTPException(status_code=404, detail="Share link not found")
     project_id = _get_project_id_from_link(db, link)
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
-    return _share_link_response(link)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
+    return _share_link_response(link, include_secret=_may_view_share_secret(db, project_id, current_user))
 
 
 # ── PATCH share link ─────────────────────────────────────────────────────────
@@ -647,11 +656,13 @@ def list_folder_share_links(
     current_user: User = Depends(get_current_user),
 ):
     folder = _get_folder(db, folder_id)
-    require_project_role(db, folder.project_id, current_user, ProjectRole.viewer)
-    return db.query(ShareLink).filter(
+    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.viewer)
+    include_secret = _may_view_share_secret(db, folder.project_id, current_user)
+    links = db.query(ShareLink).filter(
         ShareLink.folder_id == folder_id,
         ShareLink.deleted_at.is_(None),
     ).all()
+    return [_share_link_response(link, include_secret=include_secret) for link in links]
 
 
 # ── Folder direct user/team sharing ──────────────────────────────────────────
@@ -769,7 +780,7 @@ def list_folder_direct_shares(
 ):
     """List direct user shares for a folder."""
     folder = _get_folder(db, folder_id)
-    require_project_role(db, folder.project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, folder.project_id, current_user, ProjectRole.viewer)
     shares = db.query(AssetShare).filter(
         AssetShare.folder_id == folder_id,
         AssetShare.deleted_at.is_(None),
@@ -786,7 +797,7 @@ def list_asset_direct_shares(
 ):
     """List direct user shares for an asset."""
     asset = _get_asset(db, asset_id)
-    require_project_role(db, asset.project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, asset.project_id, current_user, ProjectRole.viewer)
     shares = db.query(AssetShare).filter(
         AssetShare.asset_id == asset_id,
         AssetShare.deleted_at.is_(None),
@@ -934,7 +945,8 @@ def list_project_share_links(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
+    include_secret = _may_view_share_secret(db, project_id, current_user)
 
     # Subquery for view_count and last_viewed_at
     activity_stats = db.query(
@@ -1021,7 +1033,7 @@ def list_project_share_links(
     return [
         ShareLinkListItem(
             id=row.id,
-            token=row.token,
+            token=row.token if include_secret else None,
             title=row.title,
             description=row.description,
             is_enabled=row.is_enabled,
@@ -1049,7 +1061,7 @@ def get_share_link_activity(
     if not link:
         raise HTTPException(status_code=404, detail="Share link not found")
     project_id = _get_project_id_from_link(db, link)
-    require_project_role(db, project_id, current_user, ProjectRole.viewer)
+    require_effective_project_role(db, project_id, current_user, ProjectRole.viewer)
 
     offset = (page - 1) * per_page
     activities = db.query(ShareLinkActivity).filter(

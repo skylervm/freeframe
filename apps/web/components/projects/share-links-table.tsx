@@ -95,13 +95,14 @@ export function ShareLinksTable({
             </thead>
             <tbody>
               {filtered.map((link, i) => {
-                const shareUrl = `${frontendUrl}/share/${link.token}`
-                const isCopied = copiedToken === link.token
+                const canManageLink = Boolean(link.token)
+                const shareUrl = canManageLink ? `${frontendUrl}/share/${link.token}` : null
+                const isCopied = canManageLink && copiedToken === link.token
                 const isLast = i === filtered.length - 1
 
                 return (
                   <tr
-                    key={link.token}
+                    key={link.id}
                     className={cn(
                       'group transition-colors hover:bg-bg-hover/40',
                       !isLast && 'border-b border-border',
@@ -109,10 +110,22 @@ export function ShareLinksTable({
                   >
                     {/* Title */}
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => onSelectLink(link.token)}
-                        className="flex items-center gap-2 text-left hover:text-accent transition-colors"
-                      >
+                      {canManageLink ? (
+                        <button
+                          onClick={() => onSelectLink(link.token!)}
+                          className="flex items-center gap-2 text-left hover:text-accent transition-colors"
+                        >
+                          {link.share_type === 'folder' ? (
+                            <Folder className="h-4 w-4 text-text-tertiary shrink-0" />
+                          ) : (
+                            <File className="h-4 w-4 text-text-tertiary shrink-0" />
+                          )}
+                          <span className="text-text-primary font-medium truncate max-w-[180px]">
+                            {link.title}
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-2 text-left">
                         {link.share_type === 'folder' ? (
                           <Folder className="h-4 w-4 text-text-tertiary shrink-0" />
                         ) : (
@@ -121,46 +134,53 @@ export function ShareLinksTable({
                         <span className="text-text-primary font-medium truncate max-w-[180px]">
                           {link.title}
                         </span>
-                      </button>
+                      </div>
+                      )}
                     </td>
 
                     {/* Link */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center rounded-md border border-border bg-bg-tertiary px-2 py-1 text-xs text-text-secondary font-mono truncate max-w-[200px]">
-                          {shareUrl}
+                          {shareUrl ?? 'Link details available'}
                         </span>
-                        <button
-                          onClick={(e) => handleCopy(link.token, e)}
-                          className="flex items-center justify-center h-6 w-6 rounded border border-border bg-bg-tertiary hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors shrink-0"
-                          title="Copy link"
-                        >
-                          {isCopied ? (
-                            <Check className="h-3 w-3 text-green-400" />
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
+                        {canManageLink && (
+                          <button
+                            onClick={(e) => handleCopy(link.token!, e)}
+                            className="flex items-center justify-center h-6 w-6 rounded border border-border bg-bg-tertiary hover:bg-bg-hover text-text-tertiary hover:text-text-primary transition-colors shrink-0"
+                            title="Copy link"
+                          >
+                            {isCopied ? (
+                              <Check className="h-3 w-3 text-green-400" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     </td>
 
                     {/* Visibility (toggle) */}
                     <td className="px-4 py-3">
-                      <Switch.Root
-                        checked={link.is_enabled}
-                        onCheckedChange={(checked) => onToggleEnabled(link.token, checked)}
-                        className={cn(
-                          'relative h-5 w-9 rounded-full transition-colors outline-none cursor-pointer',
-                          link.is_enabled ? 'bg-accent' : 'bg-border',
-                        )}
-                      >
-                        <Switch.Thumb
+                      {canManageLink ? (
+                        <Switch.Root
+                          checked={link.is_enabled}
+                          onCheckedChange={(checked) => onToggleEnabled(link.token!, checked)}
                           className={cn(
-                            'block h-4 w-4 rounded-full bg-white transition-transform',
-                            link.is_enabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+                            'relative h-5 w-9 rounded-full transition-colors outline-none cursor-pointer',
+                            link.is_enabled ? 'bg-accent' : 'bg-border',
                           )}
-                        />
-                      </Switch.Root>
+                        >
+                          <Switch.Thumb
+                            className={cn(
+                              'block h-4 w-4 rounded-full bg-white transition-transform',
+                              link.is_enabled ? 'translate-x-[18px]' : 'translate-x-[2px]',
+                            )}
+                          />
+                        </Switch.Root>
+                      ) : (
+                        <span className="text-xs text-text-tertiary">Read only</span>
+                      )}
                     </td>
 
                     {/* Access Type */}
@@ -186,13 +206,15 @@ export function ShareLinksTable({
 
                     {/* Activity */}
                     <td className="px-4 py-3">
-                      <button
-                        onClick={() => onViewActivity(link.token)}
-                        className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        View Activity
-                      </button>
+                      {canManageLink && (
+                        <button
+                          onClick={() => onViewActivity(link.token!)}
+                          className="flex items-center gap-1.5 text-xs text-text-tertiary hover:text-text-primary transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          View Activity
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )

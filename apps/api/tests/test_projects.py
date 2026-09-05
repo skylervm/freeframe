@@ -88,42 +88,24 @@ def test_list_projects(client, auth_headers, mock_db, test_user):
     assert resp.json() == []
 
 
-def test_get_project(client, auth_headers, mock_db, test_user):
+def test_get_project(client, auth_headers, mock_db, test_user, monkeypatch):
     """GET /projects/{project_id} — returns project for member."""
     org_id = uuid.uuid4()
     proj = _mock_project(org_id, test_user.id)
-    member = _mock_project_member(proj.id, test_user.id)
-
-    call_count = 0
-
-    def _first_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return proj
-        return member
-
-    mock_db.first.side_effect = _first_side_effect
+    mock_db.first.return_value = proj
+    monkeypatch.setattr(project_router, "get_effective_project_role", lambda *_: ProjectRole.owner)
 
     resp = client.get(f"/projects/{proj.id}", headers=auth_headers)
     assert resp.status_code == 200
 
 
-def test_get_project_not_member(client, auth_headers, mock_db, test_user):
+def test_get_project_not_member(client, auth_headers, mock_db, test_user, monkeypatch):
     """GET /projects/{project_id} — 403 if user is not a member."""
     org_id = uuid.uuid4()
     proj = _mock_project(org_id, test_user.id)
 
-    call_count = 0
-
-    def _first_side_effect():
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return proj
-        return None  # no membership
-
-    mock_db.first.side_effect = _first_side_effect
+    mock_db.first.return_value = proj
+    monkeypatch.setattr(project_router, "get_effective_project_role", lambda *_: None)
 
     resp = client.get(f"/projects/{proj.id}", headers=auth_headers)
     assert resp.status_code == 403

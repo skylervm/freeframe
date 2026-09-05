@@ -180,7 +180,7 @@ def test_both_initiate_paths_record_the_upload_id(real_db, monkeypatch, path):
                             raising=False)
     monkeypatch.setattr(upload_module, "upload_guard_error", lambda db, n: None)
     monkeypatch.setattr(assets_module, "upload_guard_error", lambda db, n: None, raising=False)
-    monkeypatch.setattr(upload_module, "require_project_role", lambda db, pid, u, r: None)
+    monkeypatch.setattr(upload_module, "require_effective_project_role", lambda db, pid, u, r: None)
 
     if path == "new_asset":
         body = InitiateUploadRequest(
@@ -192,7 +192,7 @@ def test_both_initiate_paths_record_the_upload_id(real_db, monkeypatch, path):
         asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video,
                       created_by=owner.id)
         real_db.add(asset); real_db.flush()
-        monkeypatch.setattr(assets_module, "require_project_role", lambda *a, **k: None,
+        monkeypatch.setattr(assets_module, "require_effective_project_role", lambda *a, **k: None,
                             raising=False)
         result = assets_module.initiate_new_version(
             asset.id,

@@ -13,6 +13,7 @@ from ..tasks.celery_app import send_task_safe
 from ..config import settings
 from ..services import s3_service
 from ..services.search import escape_like
+from ..services.permissions import require_workspace_owner_retained
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -152,5 +153,6 @@ def delete_user(user_id: uuid.UUID, db: Session = Depends(get_db), current_user:
     user = db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    require_workspace_owner_retained(db, user.id)
     user.deleted_at = datetime.now(timezone.utc)
     db.commit()
