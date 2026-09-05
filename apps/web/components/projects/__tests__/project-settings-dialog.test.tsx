@@ -18,6 +18,17 @@ beforeEach(() => {
 })
 
 describe('project poster upload', () => {
+  it('keeps a selected poster when the parent refreshes the same project', () => {
+    const props = { project, open: true, onOpenChange: vi.fn(), onUpdated: vi.fn() }
+    const { baseElement, rerender } = render(<ProjectSettingsDialog {...props} />)
+    const input = baseElement.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['jpg'], 'cover.jpg', { type: 'image/jpeg' })] } })
+
+    rerender(<ProjectSettingsDialog {...props} project={{ ...project }} />)
+
+    expect(screen.getByAltText('Poster')).toHaveAttribute('src', 'blob:cover')
+  })
+
   it('shows the API error and keeps the dialog open when a poster upload fails', async () => {
     vi.mocked(api.upload).mockRejectedValueOnce(new Error('Project owner access required'))
     const onOpenChange = vi.fn()
