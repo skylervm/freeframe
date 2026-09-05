@@ -34,7 +34,9 @@ from . import upload
 
 
 router = APIRouter(prefix="/automation", tags=["automation"])
-_CLIP_INSTRUCTION = re.compile(r"^\s*clip\s+\d+\s*:\s*(start here|end here)\s*$", re.IGNORECASE)
+_CLIP_INSTRUCTION = re.compile(
+    r"^\s*clip\s+\d+\s*:\s*(?:start|end)(?:\s+here)?\s*$", re.IGNORECASE
+)
 
 
 def _lock_idempotency_key(db: Session, token_id: uuid.UUID, key: uuid.UUID) -> None:
