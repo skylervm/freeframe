@@ -28,6 +28,7 @@ export function ProjectSettingsDialog({
   const [isPublic, setIsPublic] = React.useState(project.is_public ?? false)
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
+  const [saveError, setSaveError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
@@ -38,6 +39,7 @@ export function ProjectSettingsDialog({
     setIsPublic(project.is_public ?? false)
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
+    setSaveError(null)
   }, [project])
 
   const handlePosterSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -49,6 +51,7 @@ export function ProjectSettingsDialog({
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       // Upload poster if changed
       if (posterFile) {
@@ -66,8 +69,9 @@ export function ProjectSettingsDialog({
 
       onUpdated()
       onOpenChange(false)
-    } catch {
-      // silently fail
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      setSaveError(message || 'Could not save project settings.')
     } finally {
       setSaving(false)
     }
@@ -190,6 +194,7 @@ export function ProjectSettingsDialog({
           </div>
 
           {/* Footer */}
+          {saveError && <p role="alert" className="px-6 pb-3 text-sm text-status-error">{saveError}</p>}
           <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-border">
             <Dialog.Close asChild>
               <Button variant="secondary" size="sm">Cancel</Button>
@@ -203,4 +208,3 @@ export function ProjectSettingsDialog({
     </Dialog.Root>
   )
 }
-
