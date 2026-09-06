@@ -428,6 +428,7 @@ export default function ProjectsPage() {
           <ProjectFolderControls
             projects={[]}
             userId={user?.id}
+            viewMode={viewMode}
             onMutate={() => mutate()}
             moveProject={moveProject}
             onMoveProjectHandled={() => setMoveProject(null)}
@@ -449,6 +450,7 @@ export default function ProjectsPage() {
           <ProjectFolderControls
             projects={projects ?? []}
             userId={user?.id}
+            viewMode={viewMode}
             onMutate={() => mutate()}
             moveProject={moveProject}
             onMoveProjectHandled={() => setMoveProject(null)}
