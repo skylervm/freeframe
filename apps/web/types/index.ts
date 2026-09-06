@@ -14,6 +14,8 @@ export type ProjectRole = "owner" | "editor" | "reviewer" | "viewer";
 
 export type ProjectType = "personal" | "team";
 
+export type ProjectFolderScope = "personal" | "shared" | "workspace";
+
 export type SharePermission = "view" | "comment" | "approve";
 
 export type NotificationType = "mention" | "assignment" | "due_soon" | "comment" | "approval";
@@ -108,6 +110,34 @@ export interface ProjectMember {
   invited_by: string | null;
   invited_at: string | null;
   deleted_at: string | null;
+}
+
+export interface ProjectFolder {
+  id: string;
+  workspace_id: string;
+  parent_id: string | null;
+  owner_id: string;
+  created_by: string;
+  name: string;
+  scope: ProjectFolderScope;
+  is_private: boolean;
+  created_at: string;
+  role?: "viewer" | "editor";
+}
+
+export interface PersonalProjectPlacement {
+  id: string;
+  user_id: string;
+  project_id: string;
+  folder_id: string;
+}
+
+export interface ProjectFolderShare {
+  id: string;
+  folder_id: string;
+  user_id: string;
+  role: "viewer" | "editor";
+  shared_by: string;
 }
 
 // ─── Asset & Media Entities ───────────────────────────────────────────────────

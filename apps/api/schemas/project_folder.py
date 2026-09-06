@@ -49,6 +49,7 @@ class ProjectFolderResponse(BaseModel):
     scope: ProjectFolderScope
     is_private: bool
     created_at: datetime
+    role: ProjectRole | None = None
     model_config = {"from_attributes": True}
 
 

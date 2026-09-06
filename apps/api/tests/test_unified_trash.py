@@ -8,11 +8,12 @@ from apps.api.models.project import Project, ProjectMember, ProjectRole, Project
 from apps.api.models.project_folder import ProjectFolder, ProjectFolderScope, ProjectFolderShare
 from apps.api.models.trash import TrashEntityType, TrashOperation
 from apps.api.models.user import User
-from apps.api.models.workspace import Workspace
+from apps.api.models.workspace import Workspace, WorkspaceMember, WorkspaceRole
 from apps.api.routers.folders import delete_folder, restore_asset
 from apps.api.routers.automation import delete_automation_asset
 from apps.api.routers.project_folders import (
     delete_project_folder,
+    list_project_folders,
     list_unified_trash,
     restore_unified_trash_item,
 )
@@ -32,6 +33,44 @@ def _project(db, owner: User) -> Project:
     db.add(ProjectMember(project_id=project.id, user_id=owner.id, role=ProjectRole.owner, invited_by=owner.id))
     db.flush()
     return project
+
+
+def test_list_project_folders_keeps_directly_shared_child_visible(real_db):
+    owner = _user(real_db)
+    viewer = _user(real_db)
+    workspace = Workspace(name=f"folders-{uuid.uuid4()}")
+    real_db.add(workspace)
+    real_db.flush()
+    real_db.add_all([
+        WorkspaceMember(workspace_id=workspace.id, user_id=owner.id, role=WorkspaceRole.owner),
+        WorkspaceMember(workspace_id=workspace.id, user_id=viewer.id, role=WorkspaceRole.member),
+    ])
+    parent = ProjectFolder(
+        workspace_id=workspace.id,
+        owner_id=owner.id,
+        created_by=owner.id,
+        name="private parent",
+        scope=ProjectFolderScope.shared,
+    )
+    real_db.add(parent)
+    real_db.flush()
+    child = ProjectFolder(
+        workspace_id=workspace.id,
+        parent_id=parent.id,
+        owner_id=owner.id,
+        created_by=owner.id,
+        name="shared child",
+        scope=ProjectFolderScope.shared,
+    )
+    real_db.add(child)
+    real_db.flush()
+    real_db.add(ProjectFolderShare(folder_id=child.id, user_id=viewer.id, role=ProjectRole.viewer, shared_by=owner.id))
+    real_db.commit()
+
+    folders = list_project_folders(db=real_db, current_user=viewer)
+
+    assert [folder.id for folder in folders] == [child.id]
+    assert folders[0].role == ProjectRole.viewer
 
 
 def test_folder_restore_only_revives_its_own_deletion_operation(real_db):

@@ -520,7 +520,13 @@ def remove_workspace_member(member_id: uuid.UUID, db: Session = Depends(get_db),
 def list_project_folders(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     workspace = _active_workspace(db)
     folders = db.query(ProjectFolder).filter(ProjectFolder.workspace_id == workspace.id, ProjectFolder.deleted_at.is_(None)).order_by(ProjectFolder.created_at).all()
-    return [folder for folder in folders if _folder_role(db, folder, current_user)]
+    accessible_folders = []
+    for folder in folders:
+        role = _folder_role(db, folder, current_user)
+        if role:
+            folder.role = role
+            accessible_folders.append(folder)
+    return accessible_folders
 
 
 @router.get("/project-folders/{folder_id}/shares", response_model=list[ProjectFolderShareResponse])

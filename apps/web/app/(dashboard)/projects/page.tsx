@@ -19,6 +19,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectCard } from "@/components/projects/project-card";
+import { ProjectFolderControls } from "@/components/projects/project-folder-controls";
 import { EmptyState } from "@/components/shared/empty-state";
 import { useAuthStore } from "@/stores/auth-store";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -35,9 +36,11 @@ interface CreateProjectForm {
 function ProjectListRow({
   project,
   showRole,
+  onMoveToFolder,
 }: {
   project: Project;
   showRole?: boolean;
+  onMoveToFolder?: (project: Project) => void;
 }) {
   const roleName =
     project.role === "owner"
@@ -51,14 +54,13 @@ function ProjectListRow({
             : "Member";
 
   return (
-    <a
-      href={`/projects/${project.id}`}
+    <div
       className="flex items-center gap-4 px-4 py-3 hover:bg-bg-hover transition-colors border-b border-border last:border-b-0"
     >
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-violet-600 to-fuchsia-500">
         <FolderOpen className="h-4 w-4 text-white" />
       </div>
-      <div className="flex-1 min-w-0">
+      <a href={`/projects/${project.id}`} className="flex-1 min-w-0">
         <span className="text-sm font-medium text-text-primary truncate block">
           {project.name}
         </span>
@@ -67,7 +69,7 @@ function ProjectListRow({
             ? `${project.asset_count} item${(project.asset_count ?? 0) !== 1 ? "s" : ""} · ${formatBytes(project.storage_bytes ?? 0)}`
             : "No assets yet"}
         </span>
-      </div>
+      </a>
       <div className="hidden sm:flex items-center gap-1.5 text-xs text-text-tertiary">
         <Users className="h-3 w-3" />
         {project.member_count ?? 1}
@@ -95,7 +97,17 @@ function ProjectListRow({
           {roleName}
         </span>
       )}
-    </a>
+      {onMoveToFolder && (
+        <button
+          type="button"
+          onClick={() => onMoveToFolder(project)}
+          className="rounded p-1.5 text-text-tertiary hover:bg-bg-secondary hover:text-text-primary"
+          aria-label={`Move ${project.name} to folder`}
+        >
+          <FolderOpen className="h-4 w-4" />
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -110,6 +122,7 @@ function ProjectSection({
   showRole,
   userId,
   onMutate,
+  onMoveToFolder,
 }: {
   title: string;
   icon?: React.ReactNode;
@@ -121,6 +134,7 @@ function ProjectSection({
   showRole?: boolean;
   userId?: string;
   onMutate?: () => void;
+  onMoveToFolder?: (project: Project) => void;
 }) {
   if (projects.length === 0 && !showNewButton) {
     return null;
@@ -160,6 +174,7 @@ function ProjectSection({
               key={project.id}
               project={project}
               showRole={showRole}
+              onMoveToFolder={onMoveToFolder}
               isOwner={!!userId && project.created_by === userId}
               onMutate={onMutate}
             />
@@ -185,6 +200,7 @@ function ProjectSection({
               key={project.id}
               project={project}
               showRole={showRole}
+              onMoveToFolder={onMoveToFolder}
             />
           ))}
           {showNewButton && onNewProject && (
@@ -212,6 +228,7 @@ export default function ProjectsPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [isCreating, setIsCreating] = React.useState(false);
   const [formError, setFormError] = React.useState("");
+  const [moveProject, setMoveProject] = React.useState<Project | null>(null);
 
   const [form, setForm] = React.useState<CreateProjectForm>({
     name: "",
@@ -407,19 +424,35 @@ export default function ProjectsPage() {
           ))}
         </div>
       ) : !projects || projects.length === 0 ? (
-        <div className="rounded-xl border border-border bg-bg-secondary">
-          <EmptyState
-            icon={FolderOpen}
-            title="No projects yet"
-            description="Create your first project to start organizing assets."
-            action={{
-              label: "New Project",
-              onClick: () => setDialogOpen(true),
-            }}
+        <div className="space-y-8">
+          <ProjectFolderControls
+            projects={[]}
+            userId={user?.id}
+            onMutate={() => mutate()}
+            moveProject={moveProject}
+            onMoveProjectHandled={() => setMoveProject(null)}
           />
+          <div className="rounded-xl border border-border bg-bg-secondary">
+            <EmptyState
+              icon={FolderOpen}
+              title="No projects yet"
+              description="Create your first project to start organizing assets."
+              action={{
+                label: "New Project",
+                onClick: () => setDialogOpen(true),
+              }}
+            />
+          </div>
         </div>
       ) : (
         <div className="space-y-8">
+          <ProjectFolderControls
+            projects={projects ?? []}
+            userId={user?.id}
+            onMutate={() => mutate()}
+            moveProject={moveProject}
+            onMoveProjectHandled={() => setMoveProject(null)}
+          />
           <ProjectSection
             title="My Projects"
             icon={<FolderOpen className="h-4 w-4 text-text-tertiary" />}
@@ -430,6 +463,7 @@ export default function ProjectsPage() {
             showNewButton
             userId={user?.id}
             onMutate={() => mutate()}
+            onMoveToFolder={setMoveProject}
           />
           {sharedProjects.length > 0 && (
             <ProjectSection
@@ -441,6 +475,7 @@ export default function ProjectsPage() {
               showRole
               userId={user?.id}
               onMutate={() => mutate()}
+              onMoveToFolder={setMoveProject}
             />
           )}
           {publicProjects.length > 0 && (
@@ -452,6 +487,7 @@ export default function ProjectsPage() {
               emptyMessage=""
               userId={user?.id}
               onMutate={() => mutate()}
+              onMoveToFolder={setMoveProject}
             />
           )}
         </div>

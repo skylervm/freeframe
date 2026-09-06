@@ -3,7 +3,7 @@
 import * as React from 'react'
 import Link from 'next/link'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock } from 'lucide-react'
+import { MoreHorizontal, ImagePlus, Settings, Trash2, Globe, Lock, FolderInput } from 'lucide-react'
 import { cn, formatRelativeTime, formatBytes } from '@/lib/utils'
 import { getGradientForProject } from '@/lib/gradient-utils'
 import { api } from '@/lib/api'
@@ -16,6 +16,7 @@ interface ProjectCardProps {
   isOwner?: boolean
   className?: string
   onMutate?: () => void
+  onMoveToFolder?: (project: Project) => void
 }
 
 export function ProjectCard({
@@ -24,6 +25,7 @@ export function ProjectCard({
   isOwner,
   className,
   onMutate,
+  onMoveToFolder,
 }: ProjectCardProps) {
   const gradient = getGradientForProject(project.id)
   const assetCount = project.asset_count ?? 0
@@ -107,7 +109,7 @@ export function ProjectCard({
         </Link>
 
         {/* Context menu trigger */}
-        {(isOwner || project.role === 'owner') && (
+        {(isOwner || project.role === 'owner' || onMoveToFolder) && (
           <DropdownMenu.Root>
             <DropdownMenu.Trigger asChild>
               <button
@@ -128,24 +130,34 @@ export function ProjectCard({
                   Project
                 </DropdownMenu.Label>
 
-                <DropdownMenu.Item
+                {(isOwner || project.role === 'owner') && <DropdownMenu.Item
                   className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
                   onSelect={() => setSettingsOpen(true)}
                 >
                   <Settings className="h-4 w-4 text-text-tertiary" />
                   Project Settings
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>}
 
-                <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                {onMoveToFolder && (
+                  <DropdownMenu.Item
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer outline-none transition-colors"
+                    onSelect={() => onMoveToFolder(project)}
+                  >
+                    <FolderInput className="h-4 w-4 text-text-tertiary" />
+                    Move to folder
+                  </DropdownMenu.Item>
+                )}
 
-                <DropdownMenu.Item
+                {(isOwner || project.role === 'owner') && <DropdownMenu.Separator className="my-1 h-px bg-border" />}
+
+                {(isOwner || project.role === 'owner') && <DropdownMenu.Item
                   className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-status-error hover:bg-status-error/10 cursor-pointer outline-none transition-colors"
                   onSelect={handleDelete}
                   disabled={deleting}
                 >
                   <Trash2 className="h-4 w-4" />
                   Delete
-                </DropdownMenu.Item>
+                </DropdownMenu.Item>}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
