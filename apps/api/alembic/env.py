@@ -17,14 +17,14 @@ if config.config_file_name is not None:
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# Add parent directory to path for local imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add repository root to path so models retain their package context.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from database import Base
-import models  # noqa
+from apps.api.database import Base
+from apps.api import models  # noqa
 target_metadata = Base.metadata
 
-from config import settings
+from apps.api.config import settings
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # other values from the config, defined by the needs of env.py,
