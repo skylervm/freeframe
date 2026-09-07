@@ -8,7 +8,7 @@ default, while a direct project share remains limited to that project.
 
 ## Phases
 
-### Phase 1: Data model and access rules
+### Phase 1: Data model and access rules — complete
 
 Add the singleton workspace, explicit membership, project folders, folder
 shares, and project placement. Extend project and asset permission resolution
@@ -18,23 +18,23 @@ checked.
 Personal placements are non-authoritative shortcuts. Shared and workspace
 placements grant access only when a project owner creates or moves them.
 
-### Phase 2: Folder and workspace APIs
+### Phase 2: Folder and workspace APIs — complete
 
 Add workspace membership administration, project-folder CRUD, nesting,
 privacy boundaries, project movement, and direct project sharing endpoints.
 
-### Phase 3: Project workspace UI
+### Phase 3: Project workspace UI — complete
 
 Replace the visual-only **My Projects** section with the folder browser and
 add project movement, folder sharing, and workspace-member controls.
 
-### Phase 4: Verification and rollout
+### Phase 4: Verification and rollout — complete
 
 Run API permission coverage, web tests, independent review, and production
 build. Hand off nested-sharing and direct-project-share scenarios for browser
 verification.
 
-### Phase 5: Unified Trash
+### Phase 5: Unified Trash — complete
 
 Keep deleted assets, media folders, projects, and project folders recoverable
 for the configured retention window (30 days by default). Record each deletion
@@ -67,3 +67,6 @@ define the active implementation scope.
 - 2026-09-05: Trash restoration is operation-scoped. A container restore only
   revives rows deleted by that same operation; later deletions, revocations,
   and placement changes remain authoritative.
+- 2026-09-06: The Projects screen supports both grid and list views, including
+  folder-contained projects. Web Docker builds exclude host build artifacts and
+  clear `.next` before compilation so deployments cannot retain stale UI bundles.
