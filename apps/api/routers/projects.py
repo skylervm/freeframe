@@ -233,6 +233,8 @@ def list_projects(db: Session = Depends(get_db), current_user: User = Depends(ge
         resp.storage_bytes = storage_map.get(p.id, 0)
         resp.member_count = member_counts.get(p.id, 0)
         resp.role = membership_map.get(p.id)
+        if resp.role not in {ProjectRole.owner, ProjectRole.editor}:
+            resp.dropbox_url = None
         result.append(resp)
 
     return result
@@ -246,6 +248,8 @@ def get_project(project_id: uuid.UUID, db: Session = Depends(get_db), current_us
     resp = ProjectResponse.model_validate(project)
     _apply_poster_response(resp, project, _automatic_poster_keys(db, [project.id]).get(project.id))
     resp.role = role
+    if resp.role not in {ProjectRole.owner, ProjectRole.editor}:
+        resp.dropbox_url = None
     # Calculate storage, asset count, member count
     resp.asset_count = db.query(func.count(Asset.id)).filter(
         Asset.project_id == project_id, Asset.deleted_at.is_(None),
@@ -265,6 +269,8 @@ def update_project(project_id: uuid.UUID, body: ProjectUpdate, db: Session = Dep
         project.name = body.name
     if body.description is not None:
         project.description = body.description
+    if "dropbox_url" in body.model_fields_set:
+        project.dropbox_url = body.dropbox_url
     if body.is_public is not None:
         project.is_public = body.is_public
     if body.restore_automatic_poster and project.poster_s3_key:

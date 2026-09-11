@@ -392,3 +392,38 @@ def test_automation_can_soft_delete_an_asset_in_its_project():
     assert operation.deleted_by_id == owner.user_id
     assert asset.trash_operation_id == operation_id
     db.commit.assert_called_once()
+
+
+def test_automation_updates_its_own_project_dropbox_link():
+    actor = _actor()
+    project = MagicMock(id=actor.project_id, deleted_at=None, dropbox_url=None)
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.return_value = project
+
+    result = automation_module.update_project_dropbox_link(
+        automation_module.AutomationDropboxLinkRequest(dropbox_url="https://www.dropbox.com/s/example"),
+        db,
+        actor,
+    )
+
+    assert project.dropbox_url == "https://www.dropbox.com/s/example"
+    assert result == {"dropbox_url": "https://www.dropbox.com/s/example"}
+    db.commit.assert_called_once()
+
+
+def test_automation_rejects_invalid_dropbox_link_host():
+    with pytest.raises(ValidationError):
+        automation_module.AutomationDropboxLinkRequest(dropbox_url="https://example.com/s/example")
+
+
+def test_automation_dropbox_link_requires_explicit_value():
+    with pytest.raises(ValidationError):
+        automation_module.AutomationDropboxLinkRequest()
+
+
+def test_automation_dropbox_link_accepts_explicit_null():
+    body = automation_module.AutomationDropboxLinkRequest(dropbox_url=None)
+
+    assert body.dropbox_url is None

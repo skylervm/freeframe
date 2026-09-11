@@ -115,6 +115,8 @@ export default function ProjectDetailPage() {
   } | null>(null);
   const [assetToRename, setAssetToRename] = React.useState<AssetResponse | null>(null);
   const [assetToDelete, setAssetToDelete] = React.useState<AssetResponse | null>(null);
+  const [dropboxEditing, setDropboxEditing] = React.useState(false);
+  const [dropboxUrl, setDropboxUrl] = React.useState("");
 
   const { files: uploadFiles, startUpload } = useUploadStore();
   const { user } = useAuthStore();
@@ -151,7 +153,7 @@ export default function ProjectDetailPage() {
     removeReaction,
   } = useComments(selectedAsset?.id || null, selectedVersionId);
 
-  const { data: project, isLoading: loadingProject } = useSWR<Project>(
+  const { data: project, isLoading: loadingProject, mutate: mutateProject } = useSWR<Project>(
     `/projects/${projectId}`,
     () => api.get<Project>(`/projects/${projectId}`),
   );
@@ -295,6 +297,12 @@ export default function ProjectDetailPage() {
   const canSeeShareLinks = currentRole === "owner" || currentRole === "editor";
   const canComment = currentRole !== "viewer";
 
+  async function saveDropboxUrl() {
+    await api.patch(`/projects/${projectId}`, { dropbox_url: dropboxUrl.trim() });
+    await mutateProject();
+    setDropboxEditing(false);
+  }
+
   function openShareDialog(assetIds: string[], folderIds: string[]) {
     if (folderIds.length === 1 && assetIds.length === 0) {
       const folder = subfolders?.find((f) => f.id === folderIds[0]);
@@ -433,6 +441,54 @@ export default function ProjectDetailPage() {
             }}
           />
         </div>
+
+        {canSeeShareLinks && (project?.dropbox_url || currentRole === "owner") && <div className="px-3 py-2 border-t border-border">
+          <div className="w-full flex items-center justify-between px-2 mb-1">
+            <span className="text-2xs font-semibold text-text-tertiary uppercase tracking-wider">
+              Dropbox
+            </span>
+            {currentRole === "owner" && !dropboxEditing && (
+              <button
+                className="text-text-tertiary hover:text-text-primary transition-colors"
+                onClick={() => {
+                  setDropboxUrl(project?.dropbox_url || "");
+                  setDropboxEditing(true);
+                }}
+                title={project?.dropbox_url ? "Edit Dropbox link" : "Add Dropbox link"}
+              >
+                {project?.dropbox_url ? "Edit" : <Plus className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </div>
+          {dropboxEditing ? (
+            <form
+              className="px-2 flex gap-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveDropboxUrl();
+              }}
+            >
+              <Input
+                value={dropboxUrl}
+                onChange={(event) => setDropboxUrl(event.target.value)}
+                placeholder="https://www.dropbox.com/..."
+                className="h-7 text-xs"
+                autoFocus
+              />
+              <Button type="submit" size="sm" className="h-7 px-2">Save</Button>
+            </form>
+          ) : project?.dropbox_url ? (
+            <a
+              href={project.dropbox_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-2 py-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open in Dropbox
+            </a>
+          ) : null}
+        </div>}
 
         {/* Share Links section — only visible to owner/editor */}
         {canSeeShareLinks && <div className="px-3 py-2 border-t border-border">

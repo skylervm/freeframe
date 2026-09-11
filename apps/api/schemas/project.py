@@ -1,8 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import uuid
 from datetime import datetime
 from typing import Literal
 from ..models.project import ProjectType, ProjectRole
+from ..services.dropbox import validate_dropbox_url
 
 class ProjectCreate(BaseModel):
     name: str
@@ -12,13 +13,20 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    dropbox_url: str | None = None
     is_public: bool | None = None
     restore_automatic_poster: bool = False
+
+    @field_validator("dropbox_url")
+    @classmethod
+    def validate_dropbox_url_field(cls, value: str | None) -> str | None:
+        return validate_dropbox_url(value)
 
 class ProjectResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
+    dropbox_url: str | None
     project_type: ProjectType
     created_by: uuid.UUID
     project_folder_id: uuid.UUID | None = None
