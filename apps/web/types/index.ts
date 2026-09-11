@@ -86,6 +86,7 @@ export interface Project {
   id: string;
   name: string;
   description: string | null;
+  dropbox_url?: string | null;
   created_by: string;
   project_folder_id?: string | null;
   org_id?: string;

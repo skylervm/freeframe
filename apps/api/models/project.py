@@ -25,6 +25,7 @@ class Project(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
+    dropbox_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     project_type: Mapped[ProjectType] = mapped_column(Enum(ProjectType), default=ProjectType.personal)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     poster_s3_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)

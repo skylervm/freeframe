@@ -13,19 +13,23 @@ import type { Project } from '@/types'
 
 interface ProjectSettingsDialogProps {
   project: Project
+  canEditDropboxLink?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
   onUpdated: () => void
 }
 
+
 export function ProjectSettingsDialog({
   project,
+  canEditDropboxLink = project.role === 'owner',
   open,
   onOpenChange,
   onUpdated,
 }: ProjectSettingsDialogProps) {
   const [name, setName] = React.useState(project.name)
   const [description, setDescription] = React.useState(project.description || '')
+  const [dropboxUrl, setDropboxUrl] = React.useState(project.dropbox_url || '')
   const [isPublic, setIsPublic] = React.useState(project.is_public ?? false)
   const [posterPreview, setPosterPreview] = React.useState<string | null>(project.poster_url ?? null)
   const [posterFile, setPosterFile] = React.useState<File | null>(null)
@@ -40,6 +44,7 @@ export function ProjectSettingsDialog({
   React.useEffect(() => {
     setName(project.name)
     setDescription(project.description || '')
+    setDropboxUrl(project.dropbox_url || '')
     setIsPublic(project.is_public ?? false)
     setPosterPreview(project.poster_url ?? null)
     setPosterFile(null)
@@ -83,6 +88,7 @@ export function ProjectSettingsDialog({
       await api.patch(`/projects/${project.id}`, {
         name: name.trim(),
         description: description.trim() || null,
+        ...(canEditDropboxLink ? { dropbox_url: dropboxUrl.trim() } : {}),
         is_public: isPublic,
         restore_automatic_poster: useAutomaticCover,
       })
@@ -193,6 +199,19 @@ export function ProjectSettingsDialog({
                     className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary resize-none focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
                   />
                 </div>
+
+                {canEditDropboxLink && (
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Dropbox link</label>
+                    <input
+                      type="url"
+                      value={dropboxUrl}
+                      onChange={(e) => setDropboxUrl(e.target.value)}
+                      placeholder="https://www.dropbox.com/..."
+                      className="w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors"
+                    />
+                  </div>
+                )}
 
                 {/* Public / Private toggle */}
                 <div className="rounded-xl border border-border bg-bg-tertiary/50 p-4">

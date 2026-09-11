@@ -10,8 +10,11 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 import pytest
 
+import pytest
+
 from apps.api.models.project import ProjectType, ProjectRole
 from apps.api.routers import projects as project_router
+from apps.api.services.dropbox import validate_dropbox_url
 
 
 def _mock_project(
@@ -25,6 +28,8 @@ def _mock_project(
     p.team_id = None
     p.name = name
     p.description = None
+    p.dropbox_url = None
+    p.project_folder_id = None
     p.project_type = ProjectType.personal
     p.created_by = created_by
     p.created_at = datetime.now(timezone.utc)
@@ -130,6 +135,68 @@ def test_get_project_not_member(client, auth_headers, mock_db, test_user):
 
     resp = client.get(f"/projects/{proj.id}", headers=auth_headers)
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "dropbox_url",
+    [
+        "https://evil.com\\@dropbox.com/x",
+        "https://user@www.dropbox.com/x",
+        "https://www.dropbox.com:8443/x",
+        "https://www.dropbox.com/x\n",
+        "https://www.dropbox.com/x#javascript:alert(1)",
+    ],
+)
+def test_validate_dropbox_url_rejects_ambiguous_urls(dropbox_url):
+    with pytest.raises(ValueError):
+        validate_dropbox_url(dropbox_url)
+
+
+def test_validate_dropbox_url_accepts_encoded_path():
+    assert validate_dropbox_url("https://www.dropbox.com/home/Work/1%20Projects") == (
+        "https://www.dropbox.com/home/Work/1%20Projects"
+    )
+
+
+def test_get_project_redacts_dropbox_url_for_reviewer(client, auth_headers, mock_db, test_user, monkeypatch):
+    org_id = uuid.uuid4()
+    proj = _mock_project(org_id, test_user.id)
+    proj.dropbox_url = "https://www.dropbox.com/s/example"
+    mock_db.first.return_value = proj
+    monkeypatch.setattr(project_router, "get_effective_project_role", lambda *args: ProjectRole.reviewer)
+
+    resp = client.get(f"/projects/{proj.id}", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["dropbox_url"] is None
+
+
+def test_get_project_returns_dropbox_url_for_editor(client, auth_headers, mock_db, test_user, monkeypatch):
+    org_id = uuid.uuid4()
+    proj = _mock_project(org_id, test_user.id)
+    proj.dropbox_url = "https://www.dropbox.com/s/example"
+    mock_db.first.return_value = proj
+    monkeypatch.setattr(project_router, "get_effective_project_role", lambda *args: ProjectRole.editor)
+
+    resp = client.get(f"/projects/{proj.id}", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["dropbox_url"] == "https://www.dropbox.com/s/example"
+
+
+@pytest.mark.parametrize("role", [ProjectRole.reviewer, ProjectRole.viewer])
+def test_list_projects_redacts_dropbox_url_without_editor_access(client, auth_headers, mock_db, test_user, monkeypatch, role):
+    org_id = uuid.uuid4()
+    proj = _mock_project(org_id, test_user.id)
+    proj.dropbox_url = "https://www.dropbox.com/s/example"
+    monkeypatch.setattr(project_router, "get_accessible_project_roles", lambda *args: {proj.id: role})
+    calls = []
+    mock_db.all.side_effect = lambda: [proj] if not calls.append(1) and len(calls) == 1 else []
+
+    resp = client.get("/projects", headers=auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["dropbox_url"] is None
 
 
 def test_delete_project(client, auth_headers, mock_db, test_user):
@@ -288,3 +355,46 @@ def test_poster_reset_clears_pointer_before_deleting_object(poster_setup, mock_d
     projects.remove_project_poster(project.id, mock_db, test_user)
 
     assert events == [("commit", None), ("delete", "posters/old.jpg")]
+def test_update_project_accepts_dropbox_url(client, auth_headers, mock_db, test_user):
+    org_id = uuid.uuid4()
+    proj = _mock_project(org_id, test_user.id)
+    member = _mock_project_member(proj.id, test_user.id, ProjectRole.owner)
+    mock_db.first.side_effect = [proj, member]
+
+    resp = client.patch(
+        f"/projects/{proj.id}",
+        json={"dropbox_url": "https://www.dropbox.com/s/example"},
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert proj.dropbox_url == "https://www.dropbox.com/s/example"
+
+
+def test_update_project_rejects_invalid_dropbox_url(client, auth_headers, mock_db, test_user):
+    project_id = uuid.uuid4()
+
+    for dropbox_url in ("http://www.dropbox.com/s/example", "https://example.com/s/example"):
+        resp = client.patch(
+            f"/projects/{project_id}",
+            json={"dropbox_url": dropbox_url},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 422
+
+
+def test_update_project_clears_dropbox_url_with_empty_string(client, auth_headers, mock_db, test_user):
+    org_id = uuid.uuid4()
+    proj = _mock_project(org_id, test_user.id)
+    proj.dropbox_url = "https://www.dropbox.com/s/example"
+    member = _mock_project_member(proj.id, test_user.id, ProjectRole.owner)
+    mock_db.first.side_effect = [proj, member]
+
+    resp = client.patch(
+        f"/projects/{proj.id}",
+        json={"dropbox_url": ""},
+        headers=auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert proj.dropbox_url is None

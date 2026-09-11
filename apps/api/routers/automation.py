@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -19,6 +20,7 @@ from ..models.automation_token import ProjectAutomationToken
 from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRenewal, Project, ProjectMember, ProjectRole, ProjectType
 from ..models.trash import TrashEntityType, TrashOperation
 from ..models.user import User, UserStatus
+from ..services.dropbox import validate_dropbox_url
 from ..schemas.bootstrap import BootstrapProjectCreate, BootstrapProjectResponse, BootstrapTokenRenewal
 from ..middleware.rate_limit import rate_limit
 from ..models.comment import Comment
@@ -38,6 +40,15 @@ router = APIRouter(prefix="/automation", tags=["automation"])
 _CLIP_INSTRUCTION = re.compile(
     r"^\s*clip\s+\d+\s*:\s*(?:start|end)(?:\s+here)?\s*$", re.IGNORECASE
 )
+
+
+class AutomationDropboxLinkRequest(BaseModel):
+    dropbox_url: str | None
+
+    @field_validator("dropbox_url")
+    @classmethod
+    def validate_dropbox_url_field(cls, value: str | None) -> str | None:
+        return validate_dropbox_url(value)
 
 
 def _lock_idempotency_key(db: Session, token_id: uuid.UUID, key: uuid.UUID) -> None:
@@ -248,6 +259,29 @@ def _reserve_bootstrap_upload_bytes(db: Session, actor: AutomationActor, request
     if token.reserved_upload_bytes + requested_bytes > token.max_total_upload_bytes:
         raise HTTPException(status_code=413, detail="This token's total upload limit has been reached")
     token.reserved_upload_bytes += requested_bytes
+
+
+@router.patch(
+    "/project/dropbox-link",
+    dependencies=[Depends(rate_limit("automation_dropbox_link", 60, 3600))],
+)
+def update_project_dropbox_link(
+    body: AutomationDropboxLinkRequest,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    project = db.query(Project).filter(Project.id == actor.project_id, Project.deleted_at.is_(None)).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.dropbox_url = body.dropbox_url
+    db.add(ActivityLog(
+        project_id=project.id,
+        user_id=actor.user.id,
+        action="automation_dropbox_link_updated",
+        payload={"dropbox_url": project.dropbox_url},
+    ))
+    db.commit()
+    return {"dropbox_url": project.dropbox_url}
 
 
 @router.post("/upload/initiate", response_model=InitiateUploadResponse)

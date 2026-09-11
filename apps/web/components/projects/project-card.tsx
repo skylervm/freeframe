@@ -167,6 +167,7 @@ export function ProjectCard({
       {/* Project Settings Dialog */}
       <ProjectSettingsDialog
         project={project}
+        canEditDropboxLink={isOwner || project.role === 'owner'}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onUpdated={() => onMutate?.()}
