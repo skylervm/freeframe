@@ -51,6 +51,14 @@ The permission test matrix covers direct grants, inherited grants, private
 boundaries, revocation, events, uploads, list/detail views, and the direct
 membership-only owner and automation paths.
 
+### Phase 6: Project Dropbox link — complete
+
+- Nullable `dropbox_url` on projects (migration `a1b2c3d4e5f6`), https dropbox.com validator.
+- Owner edits via settings dialog or DROPBOX sidebar section; owner/editor see it, lower roles redacted.
+- `PATCH /automation/project/dropbox-link` lets a project-scoped automation token set only that field (60/hour).
+- Shipped 2026-09-11 in PR #8; all four live projects linked.
+- Known: the web app has no `typecheck` script; run `./node_modules/.bin/tsc --noEmit -p .` inside `apps/web`. ~27 API tests need a local Postgres and fail without one.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
@@ -70,3 +78,6 @@ define the active implementation scope.
 - 2026-09-06: The Projects screen supports both grid and list views, including
   folder-contained projects. Web Docker builds exclude host build artifacts and
   clear `.next` before compilation so deployments cannot retain stale UI bundles.
+- 2026-09-11: A project's Dropbox link is a capability URL for the delivery
+  folder, so it is owner/editor-only in the UI and redacted from the API for
+  lower roles; automation tokens may set it only on their own project.
