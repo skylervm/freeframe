@@ -13,6 +13,11 @@ class BootstrapProjectCreate(BaseModel):
     token_secret_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class BootstrapProjectAdopt(BaseModel):
+    token_id: uuid.UUID
+    token_secret_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class BootstrapProjectResponse(BaseModel):
     project_id: uuid.UUID
     project_name: str
