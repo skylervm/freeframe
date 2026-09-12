@@ -4,7 +4,7 @@ import uuid
 
 from apps.api.models.trash import TrashEntityType
 import hashlib
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 from fastapi import HTTPException
@@ -12,7 +12,8 @@ from sqlalchemy.exc import IntegrityError
 
 from apps.api.middleware.automation_auth import AutomationActor, get_automation_actor
 from apps.api.middleware.bootstrap_auth import BootstrapActor, get_bootstrap_actor
-from apps.api.models.asset import ProcessingStatus
+from apps.api.models.asset import Asset, AssetVersion, MediaFile, ProcessingStatus
+from apps.api.tests.conftest import configure_first_results, configure_project_access_results
 from apps.api.routers import automation as automation_module
 from apps.api.routers import upload as upload_module
 from apps.api.schemas.automation_token import AutomationTokenCreate
@@ -434,7 +435,7 @@ def test_initiate_reuses_the_version_for_the_same_idempotency_key(client, mock_d
     )
     media_file = MagicMock()
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
-    mock_db.first.side_effect = [version, media_file]
+    configure_first_results(mock_db, {AssetVersion: version, MediaFile: media_file})
     from apps.api.main import app
 
     app.dependency_overrides[get_automation_actor] = lambda: actor
@@ -482,7 +483,9 @@ def test_complete_locks_the_version_before_processing(client, auth_headers, mock
     media_file.asset_id = version.asset_id
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
     media_file.file_size_bytes = 1
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     monkeypatch.setattr(upload_module, "list_upload_parts", lambda key, upload_id: [
         {"PartNumber": 1, "ETag": '"one"', "Size": media_file.file_size_bytes}
     ])
@@ -608,6 +611,116 @@ def test_review_version_falls_back_to_the_newest_version_when_needed():
 
     assert result["id"] == uploading_version.id
     assert db.first.call_count == 4
+
+
+def _download_fixture(status=ProcessingStatus.ready):
+    actor = _actor()
+    asset = MagicMock(id=uuid.uuid4(), project_id=actor.project_id)
+    version = MagicMock(
+        id=uuid.uuid4(),
+        asset_id=asset.id,
+        automation_token_id=actor.token_id,
+        processing_status=status,
+    )
+    media_file = MagicMock(
+        version_id=version.id,
+        s3_key_raw="raw/project/asset/version/original.mp4",
+        s3_key_processed="processed/project/asset/version/",
+        file_size_bytes=1234,
+        mime_type="video/mp4",
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    configure_first_results(
+        db, {AssetVersion: version, Asset: asset, MediaFile: media_file}
+    )
+    return actor, asset, version, media_file, db
+
+
+@patch("apps.api.routers.automation.generate_presigned_get_url")
+def test_automation_version_download_returns_raw_media_url(mock_presign):
+    actor, asset, version, media_file, db = _download_fixture()
+    mock_presign.return_value = "https://s3.example.com/original.mp4?sig=x"
+
+    result = automation_module.download_version(version.id, db, actor)
+
+    assert result == {
+        "version_id": version.id,
+        "asset_id": asset.id,
+        "url": "https://s3.example.com/original.mp4?sig=x",
+        "expires_at": result["expires_at"],
+        "file_size_bytes": 1234,
+        "content_type": "video/mp4",
+    }
+    assert result["expires_at"].tzinfo is not None
+    mock_presign.assert_called_once_with(
+        media_file.s3_key_raw,
+        expires_in=automation_module.settings.automation_download_url_ttl_seconds,
+    )
+
+
+@patch("apps.api.routers.automation.generate_presigned_get_url")
+def test_automation_version_download_presigns_raw_not_processed(mock_presign):
+    actor, _, version, media_file, db = _download_fixture()
+
+    automation_module.download_version(version.id, db, actor)
+
+    assert mock_presign.call_args.args[0] == media_file.s3_key_raw
+    assert mock_presign.call_args.args[0] != media_file.s3_key_processed
+
+
+def test_automation_version_download_hides_another_projects_version():
+    actor, asset, version, _, db = _download_fixture()
+    asset.project_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.download_version(version.id, db, actor)
+
+    assert error.value.status_code == 404
+
+
+def test_automation_asset_download_hides_another_project_asset():
+    actor, asset, _, _, db = _download_fixture()
+    asset.project_id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.download_asset(asset.id, db, actor)
+
+    assert error.value.status_code == 404
+
+
+@pytest.mark.parametrize("status", [ProcessingStatus.uploading, ProcessingStatus.failed])
+def test_automation_version_download_rejects_unavailable_media(status):
+    actor, _, version, _, db = _download_fixture(status)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.download_version(version.id, db, actor)
+
+    assert error.value.status_code == 409
+
+
+@patch("apps.api.routers.automation.generate_presigned_get_url")
+def test_automation_version_download_rejects_missing_media_file(mock_presign):
+    actor, asset, version, _, db = _download_fixture()
+    configure_first_results(db, {AssetVersion: version, Asset: asset, MediaFile: None})
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.download_version(version.id, db, actor)
+
+    assert error.value.status_code == 409
+    mock_presign.assert_not_called()
+
+
+@patch("apps.api.routers.automation.generate_presigned_get_url")
+def test_automation_asset_download_uses_review_version_from_its_project(mock_presign):
+    actor, asset, version, _, db = _download_fixture()
+    mock_presign.return_value = "https://s3.example.com/original.mp4?sig=x"
+    version.automation_token_id = None
+
+    result = automation_module.download_asset(asset.id, db, actor)
+
+    assert result["version_id"] == version.id
 
 
 def test_automation_can_soft_delete_an_asset_in_its_project():

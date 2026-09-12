@@ -30,6 +30,7 @@ def _find_env_file() -> str:
     return ".env"
 
 class Settings(BaseSettings):
+    automation_download_url_ttl_seconds: int = 900
     model_config = SettingsConfigDict(
         env_file=_find_env_file(),
         env_file_encoding="utf-8",
