@@ -15,7 +15,7 @@ from apps.api.models.asset import ProcessingStatus
 from apps.api.routers import automation as automation_module
 from apps.api.routers import upload as upload_module
 from apps.api.schemas.automation_token import AutomationTokenCreate
-from apps.api.schemas.bootstrap import BootstrapProjectCreate
+from apps.api.schemas.bootstrap import BootstrapProjectAdopt, BootstrapProjectCreate
 
 
 def _actor():
@@ -74,6 +74,174 @@ def test_bootstrap_rejects_conflicting_idempotency_reuse(mock_db, monkeypatch):
         automation_module.bootstrap_project(body, uuid.uuid4(), mock_db, actor)
 
     assert error.value.status_code == 409
+
+
+def _configure_bootstrap_settings(monkeypatch):
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_projects_per_day", 3)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_token_lifetime_hours", 72)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_file_bytes", 10)
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_total_upload_bytes", 20)
+
+
+def test_adopt_bootstrap_project_creates_a_renewable_token(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    project = MagicMock(id=project_id, name="Existing UI project")
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    mock_db.first.side_effect = [None, actor.user, project, membership, None]
+    mock_db.count.return_value = 0
+    _configure_bootstrap_settings(monkeypatch)
+
+    response = automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert response.project_id == project_id
+    assert response.token_id == body.token_id
+    added = [call.args[0] for call in mock_db.add.call_args_list]
+    request = next(item for item in added if isinstance(item, automation_module.AutomationBootstrapRequest))
+    token = next(item for item in added if isinstance(item, automation_module.ProjectAutomationToken))
+    assert request.project_id == project_id
+    assert request.token_id == body.token_id
+    assert request.owner_id == actor.user.id
+
+    renewal_db = MagicMock()
+    renewal_db.query.return_value = renewal_db
+    renewal_db.filter.return_value = renewal_db
+    renewal_db.populate_existing.return_value = renewal_db
+    renewal_db.with_for_update.return_value = renewal_db
+    renewal_db.first.side_effect = [None, request, token, project]
+    renewal_db.count.return_value = 0
+    monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_renewals_per_day", 3)
+    renewal = automation_module.BootstrapTokenRenewal(token_secret_hash="b" * 64)
+
+    renewed = automation_module.renew_bootstrap_token(project_id, renewal, uuid.uuid4(), renewal_db, actor)
+
+    assert renewed.project_id == project_id
+    assert renewed.token_id == body.token_id
+    assert token.secret_hash == renewal.token_secret_hash
+
+
+def test_adopt_bootstrap_project_returns_404_for_non_owner(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    mock_db.first.side_effect = [None, actor.user, MagicMock(id=project_id), MagicMock(role=automation_module.ProjectRole.editor)]
+    mock_db.count.return_value = 0
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 404
+
+
+def test_adopt_bootstrap_project_returns_404_for_missing_project(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    mock_db.first.side_effect = [None, actor.user, None, None]
+    mock_db.count.return_value = 0
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(uuid.uuid4(), body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 404
+
+
+def test_adopt_bootstrap_project_replays_an_idempotent_request(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    request_id = uuid.uuid4()
+    project = MagicMock(id=project_id, name="Existing UI project")
+    token = MagicMock(id=body.token_id, expires_at="2026-09-07T00:00:00Z")
+    existing = MagicMock(request_fingerprint=automation_module._bootstrap_adopt_fingerprint(project_id, body), project_id=project_id, token_id=body.token_id, owner_id=actor.user.id)
+    mock_db.first.side_effect = [existing, project, token]
+    _configure_bootstrap_settings(monkeypatch)
+
+    response = automation_module.adopt_bootstrap_project(project_id, body, request_id, mock_db, actor)
+
+    assert response.token_id == body.token_id
+    assert not mock_db.add.called
+    assert not mock_db.commit.called
+
+
+def test_adopt_bootstrap_project_hides_another_owners_idempotent_request(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    existing = MagicMock(
+        request_fingerprint=automation_module._bootstrap_adopt_fingerprint(project_id, body),
+        project_id=project_id,
+        token_id=body.token_id,
+        owner_id=uuid.uuid4(),
+    )
+    mock_db.first.return_value = existing
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 404
+
+
+def test_adopt_bootstrap_project_rejects_a_second_adoption(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    first_body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    second_body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="b" * 64)
+    project = MagicMock(id=project_id, name="Existing UI project")
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    existing_adoption = MagicMock(project_id=project_id)
+    mock_db.first.side_effect = [
+        None,
+        actor.user,
+        project,
+        membership,
+        None,
+        None,
+        actor.user,
+        project,
+        membership,
+        existing_adoption,
+    ]
+    mock_db.count.return_value = 0
+    _configure_bootstrap_settings(monkeypatch)
+
+    automation_module.adopt_bootstrap_project(project_id, first_body, uuid.uuid4(), mock_db, actor)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, second_body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 409
+    tokens = [
+        call.args[0]
+        for call in mock_db.add.call_args_list
+        if isinstance(call.args[0], automation_module.ProjectAutomationToken)
+        and call.args[0].project_id == project_id
+    ]
+    assert len(tokens) == 1
+
+
+def test_adopt_bootstrap_project_hides_a_prior_adoption_from_non_owner(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    existing_adoption = MagicMock(project_id=project_id)
+    mock_db.first.side_effect = [
+        None,
+        actor.user,
+        MagicMock(id=project_id),
+        MagicMock(role=automation_module.ProjectRole.editor),
+        existing_adoption,
+    ]
+    mock_db.count.return_value = 0
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 404
 
 
 def test_bootstrap_quota_reservation_rejects_overages():
