@@ -25,6 +25,7 @@ def test_delete_prefix_deletes_all_listed(monkeypatch):
     fake.list_objects_v2.return_value = {
         "Contents": [{"Key": "p/a"}, {"Key": "p/b"}], "IsTruncated": False,
     }
+    fake.delete_objects.return_value = {}
     monkeypatch.setattr(s3_service, "get_s3_client", lambda: fake)
     s3_service.delete_prefix("p/")
     _, kwargs = fake.delete_objects.call_args

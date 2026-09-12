@@ -14,6 +14,8 @@ from botocore.exceptions import ClientError
 
 import apps.api.routers.upload as upload_module
 from apps.api.models.asset import ProcessingStatus
+from apps.api.models.asset import Asset, AssetVersion, MediaFile
+from apps.api.tests.conftest import configure_project_access_results
 
 MB = 1024 * 1024
 KEY = "raw/p/a/v/original.mp4"
@@ -36,8 +38,9 @@ def abort_rows(mock_db, test_user):
     media_file.s3_key_raw = KEY
     media_file.file_size_bytes = 23 * MB
 
-    # version lookup, then (only on the uploading path) the media file lookup
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     return version, media_file
 
 
@@ -111,7 +114,9 @@ def test_a_version_that_already_reached_processing_is_left_alone(
     version = MagicMock()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.processing
-    mock_db.first.side_effect = [version]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock()}
+    )
     monkeypatch.setattr(upload_module, "abort_multipart_upload", lambda k, u: None)
     monkeypatch.setattr(upload_module, "head_object_size",
                         lambda k: pytest.fail("must not even ask"))
