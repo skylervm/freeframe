@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -196,8 +197,15 @@ def adopt_bootstrap_project(
         if existing.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="Idempotency key cannot be reused for a different project")
         project = db.query(Project).filter(Project.id == existing.project_id, Project.deleted_at.is_(None)).first()
+        membership = db.query(ProjectMember).filter(
+            ProjectMember.project_id == existing.project_id,
+            ProjectMember.user_id == actor.user.id,
+            ProjectMember.deleted_at.is_(None),
+        ).first()
+        if not project or not membership or membership.role != ProjectRole.owner:
+            raise HTTPException(status_code=404, detail="Bootstrap project not found")
         token = db.query(ProjectAutomationToken).filter(ProjectAutomationToken.id == existing.token_id, ProjectAutomationToken.deleted_at.is_(None)).first()
-        if not project or not token:
+        if not token:
             raise HTTPException(status_code=409, detail="Previous bootstrap request is no longer usable")
         return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=token.id, token_expires_at=token.expires_at)
 
@@ -245,7 +253,11 @@ def adopt_bootstrap_project(
     db.add(token)
     db.add(AutomationBootstrapRequest(idempotency_key=key, request_fingerprint=fingerprint, project_id=project.id, token_id=token.id, owner_id=actor.user.id))
     db.add(ActivityLog(project_id=project.id, user_id=actor.user.id, action="automation_bootstrap_project_adopted", payload={"request_id": key, "token_id": str(token.id)}))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Automation token already exists")
     return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=token.id, token_expires_at=expires_at)
 
 
@@ -269,17 +281,31 @@ def renew_bootstrap_token(
         if prior.request_fingerprint != fingerprint:
             raise HTTPException(status_code=409, detail="Idempotency key cannot be reused for a different renewal")
         project = db.query(Project).filter(Project.id == prior.project_id, Project.deleted_at.is_(None)).first()
+        membership = db.query(ProjectMember).filter(
+            ProjectMember.project_id == prior.project_id,
+            ProjectMember.user_id == actor.user.id,
+            ProjectMember.deleted_at.is_(None),
+        ).first()
+        if not project or not membership or membership.role != ProjectRole.owner:
+            raise HTTPException(status_code=404, detail="Bootstrap project not found")
         token = db.query(ProjectAutomationToken).filter(
             ProjectAutomationToken.id == prior.token_id,
             ProjectAutomationToken.project_id == prior.project_id,
             ProjectAutomationToken.deleted_at.is_(None),
             ProjectAutomationToken.revoked_at.is_(None),
         ).first()
-        if not project or not token or token.secret_hash != body.token_secret_hash:
+        if not token or token.secret_hash != body.token_secret_hash:
             raise HTTPException(status_code=409, detail="Previous bootstrap renewal is no longer usable")
         return BootstrapProjectResponse(project_id=project.id, project_name=project.name, token_id=prior.token_id, token_expires_at=prior.expires_at)
     request = db.query(AutomationBootstrapRequest).filter(AutomationBootstrapRequest.project_id == project_id).first()
     if not request or request.owner_id != actor.user.id:
+        raise HTTPException(status_code=404, detail="Bootstrap project not found")
+    membership = db.query(ProjectMember).filter(
+        ProjectMember.project_id == project_id,
+        ProjectMember.user_id == actor.user.id,
+        ProjectMember.deleted_at.is_(None),
+    ).first()
+    if not membership or membership.role != ProjectRole.owner:
         raise HTTPException(status_code=404, detail="Bootstrap project not found")
     token = db.query(ProjectAutomationToken).populate_existing().with_for_update().filter(
         ProjectAutomationToken.id == request.token_id,

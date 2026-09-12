@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from apps.api.middleware.automation_auth import AutomationActor, get_automation_actor
 from apps.api.middleware.bootstrap_auth import BootstrapActor, get_bootstrap_actor
@@ -87,7 +88,8 @@ def test_adopt_bootstrap_project_creates_a_renewable_token(mock_db, monkeypatch)
     actor = _bootstrap_actor()
     project_id = uuid.uuid4()
     body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
-    project = MagicMock(id=project_id, name="Existing UI project")
+    project = MagicMock(id=project_id)
+    project.name = "Existing UI project"
     membership = MagicMock(role=automation_module.ProjectRole.owner)
     mock_db.first.side_effect = [None, actor.user, project, membership, None]
     mock_db.count.return_value = 0
@@ -109,7 +111,8 @@ def test_adopt_bootstrap_project_creates_a_renewable_token(mock_db, monkeypatch)
     renewal_db.filter.return_value = renewal_db
     renewal_db.populate_existing.return_value = renewal_db
     renewal_db.with_for_update.return_value = renewal_db
-    renewal_db.first.side_effect = [None, request, token, project]
+    renewal_membership = MagicMock(role=automation_module.ProjectRole.owner)
+    renewal_db.first.side_effect = [None, request, renewal_membership, token, project]
     renewal_db.count.return_value = 0
     monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_renewals_per_day", 3)
     renewal = automation_module.BootstrapTokenRenewal(token_secret_hash="b" * 64)
@@ -153,10 +156,12 @@ def test_adopt_bootstrap_project_replays_an_idempotent_request(mock_db, monkeypa
     project_id = uuid.uuid4()
     body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
     request_id = uuid.uuid4()
-    project = MagicMock(id=project_id, name="Existing UI project")
+    project = MagicMock(id=project_id)
+    project.name = "Existing UI project"
     token = MagicMock(id=body.token_id, expires_at="2026-09-07T00:00:00Z")
     existing = MagicMock(request_fingerprint=automation_module._bootstrap_adopt_fingerprint(project_id, body), project_id=project_id, token_id=body.token_id, owner_id=actor.user.id)
-    mock_db.first.side_effect = [existing, project, token]
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    mock_db.first.side_effect = [existing, project, membership, token]
     _configure_bootstrap_settings(monkeypatch)
 
     response = automation_module.adopt_bootstrap_project(project_id, body, request_id, mock_db, actor)
@@ -164,6 +169,50 @@ def test_adopt_bootstrap_project_replays_an_idempotent_request(mock_db, monkeypa
     assert response.token_id == body.token_id
     assert not mock_db.add.called
     assert not mock_db.commit.called
+
+
+def test_adopt_bootstrap_project_replay_requires_current_owner_membership(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    project = MagicMock(id=project_id)
+    project.name = "Private UI project"
+    existing = MagicMock(
+        request_fingerprint=automation_module._bootstrap_adopt_fingerprint(project_id, body),
+        project_id=project_id,
+        token_id=body.token_id,
+        owner_id=actor.user.id,
+    )
+    membership = MagicMock(role=automation_module.ProjectRole.editor)
+    mock_db.first.side_effect = [existing, project, membership]
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 404
+    assert project.name not in error.value.detail
+    assert not mock_db.add.called
+    assert not mock_db.commit.called
+
+
+def test_adopt_bootstrap_project_returns_409_for_token_id_collision(mock_db, monkeypatch):
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
+    project = MagicMock(id=project_id)
+    project.name = "Existing UI project"
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    mock_db.first.side_effect = [None, actor.user, project, membership, None]
+    mock_db.count.return_value = 0
+    mock_db.commit.side_effect = IntegrityError("insert", {}, Exception("duplicate token id"))
+    _configure_bootstrap_settings(monkeypatch)
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.adopt_bootstrap_project(project_id, body, uuid.uuid4(), mock_db, actor)
+
+    assert error.value.status_code == 409
+    assert mock_db.rollback.called
 
 
 def test_adopt_bootstrap_project_hides_another_owners_idempotent_request(mock_db, monkeypatch):
@@ -190,7 +239,8 @@ def test_adopt_bootstrap_project_rejects_a_second_adoption(mock_db, monkeypatch)
     project_id = uuid.uuid4()
     first_body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="a" * 64)
     second_body = BootstrapProjectAdopt(token_id=uuid.uuid4(), token_secret_hash="b" * 64)
-    project = MagicMock(id=project_id, name="Existing UI project")
+    project = MagicMock(id=project_id)
+    project.name = "Existing UI project"
     membership = MagicMock(role=automation_module.ProjectRole.owner)
     existing_adoption = MagicMock(project_id=project_id)
     mock_db.first.side_effect = [
@@ -289,7 +339,8 @@ def test_bootstrap_renewal_rejects_daily_limit(monkeypatch):
     db.filter.return_value = db
     db.populate_existing.return_value = db
     db.with_for_update.return_value = db
-    db.first.side_effect = [None, request, token, project]
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    db.first.side_effect = [None, request, membership, token, project]
     db.count.return_value = 3
     monkeypatch.setattr(automation_module.settings, "automation_bootstrap_max_renewals_per_day", 3)
 
@@ -297,6 +348,31 @@ def test_bootstrap_renewal_rejects_daily_limit(monkeypatch):
         automation_module.renew_bootstrap_token(project_id, body, uuid.uuid4(), db, actor)
 
     assert error.value.status_code == 429
+
+
+def test_bootstrap_renewal_requires_current_owner_membership():
+    actor = _bootstrap_actor()
+    project_id = uuid.uuid4()
+    body = automation_module.BootstrapTokenRenewal(token_secret_hash="a" * 64)
+    token = MagicMock(id=uuid.uuid4(), secret_hash="previous" * 8, expires_at="2026-09-07T00:00:00Z")
+    request = MagicMock(project_id=project_id, token_id=token.id, owner_id=actor.user.id)
+    membership = MagicMock(role=automation_module.ProjectRole.editor)
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.populate_existing.return_value = db
+    db.with_for_update.return_value = db
+    db.first.side_effect = [None, request, membership]
+    original_secret_hash = token.secret_hash
+    original_expires_at = token.expires_at
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.renew_bootstrap_token(project_id, body, uuid.uuid4(), db, actor)
+
+    assert error.value.status_code == 404
+    assert token.secret_hash == original_secret_hash
+    assert token.expires_at == original_expires_at
+    assert not db.commit.called
 
 
 def test_bootstrap_renewal_replay_rejects_a_stale_secret():
@@ -309,7 +385,8 @@ def test_bootstrap_renewal_replay_rejects_a_stale_secret():
     db = MagicMock()
     db.query.return_value = db
     db.filter.return_value = db
-    db.first.side_effect = [prior, project, token]
+    membership = MagicMock(role=automation_module.ProjectRole.owner)
+    db.first.side_effect = [prior, project, membership, token]
 
     with pytest.raises(HTTPException) as error:
         automation_module.renew_bootstrap_token(project_id, body, uuid.uuid4(), db, actor)
