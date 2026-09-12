@@ -11,25 +11,26 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import apps.api.routers.folders as folders_module
+from apps.api.models.asset import Asset
+from apps.api.models.folder import Folder
+from apps.api.models.project import Project, ProjectMember, ProjectRole
+from apps.api.tests.conftest import configure_first_results
 
 
 def test_restore_asset_rejects_soft_deleted_project(
     client, auth_headers, mock_db, test_user, monkeypatch
 ):
-    monkeypatch.setattr(folders_module, "require_effective_project_role", lambda db, pid, u, r: None)
-
     project_id = uuid.uuid4()
     asset = MagicMock()
     asset.project_id = project_id
     asset.deleted_at = datetime.now(timezone.utc)
+    asset.trash_operation_id = None
 
     project = MagicMock()
     project.deleted_at = datetime.now(timezone.utc)  # soft-deleted
 
-    # Query sequence in restore_asset after permission is bypassed:
-    #   1) asset lookup -> asset (soft-deleted)
-    #   2) project lookup -> project (soft-deleted)
-    mock_db.first.side_effect = [asset, project]
+    owner = MagicMock(role=ProjectRole.owner, user_id=test_user.id)
+    configure_first_results(mock_db, {Asset: asset, ProjectMember: owner, Project: project})
 
     resp = client.post(f"/assets/{uuid.uuid4()}/restore", headers=auth_headers)
 
@@ -40,20 +41,17 @@ def test_restore_asset_rejects_soft_deleted_project(
 def test_restore_folder_rejects_soft_deleted_project(
     client, auth_headers, mock_db, test_user, monkeypatch
 ):
-    monkeypatch.setattr(folders_module, "require_effective_project_role", lambda db, pid, u, r: None)
-
     project_id = uuid.uuid4()
     folder = MagicMock()
     folder.project_id = project_id
     folder.deleted_at = datetime.now(timezone.utc)
+    folder.trash_operation_id = None
 
     project = MagicMock()
     project.deleted_at = datetime.now(timezone.utc)  # soft-deleted
 
-    # Query sequence in restore_folder after permission is bypassed:
-    #   1) folder lookup -> folder (soft-deleted)
-    #   2) project lookup -> project (soft-deleted)
-    mock_db.first.side_effect = [folder, project]
+    owner = MagicMock(role=ProjectRole.owner, user_id=test_user.id)
+    configure_first_results(mock_db, {Folder: folder, ProjectMember: owner, Project: project})
 
     resp = client.post(f"/folders/{uuid.uuid4()}/restore", headers=auth_headers)
 

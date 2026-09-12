@@ -59,6 +59,56 @@ def _make_user(
     return u
 
 
+class _SequenceGuardMock(MagicMock):
+    """Make exhausted mock sequences visible after TestClient swallows an exception."""
+
+    def __init__(self, *args, mock_db: MagicMock, mock_name: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._mock_db = mock_db
+        self._mock_name = mock_name
+
+    def __setattr__(self, name, value):
+        if name == "side_effect" and isinstance(value, (list, tuple)):
+            values = iter(value)
+
+            def guarded_side_effect(*args, **kwargs):
+                try:
+                    return next(values)
+                except StopIteration:
+                    test_name = os.environ.get("PYTEST_CURRENT_TEST", "unknown test")
+                    message = f"{self._mock_name}.side_effect sequence exhausted in {test_name}"
+                    self._mock_db._exhausted_mock_message = message
+                    raise AssertionError(message) from None
+
+            value = guarded_side_effect
+        super().__setattr__(name, value)
+
+
+def configure_first_results(mock_db: MagicMock, results: dict) -> None:
+    """Resolve mocked ``first()`` rows by model, not a fragile query order."""
+    queried_model = None
+
+    def query(*entities):
+        nonlocal queried_model
+        queried_model = entities[0] if entities else None
+        return mock_db
+
+    def first():
+        return results.get(queried_model)
+
+    mock_db.query.side_effect = query
+    mock_db.first.side_effect = first
+
+
+def configure_project_access_results(mock_db: MagicMock, test_user: MagicMock, results: dict) -> None:
+    """Add the ordinary direct project access rows to model-based query results."""
+    from apps.api.models.project import Project, ProjectMember, ProjectRole
+
+    member = MagicMock(role=ProjectRole.owner, user_id=test_user.id)
+    project = MagicMock(is_public=False, project_folder_id=None)
+    configure_first_results(mock_db, {ProjectMember: member, Project: project, **results})
+
+
 def _make_mock_db() -> MagicMock:
     """Return a fresh mock Session."""
     db = MagicMock()
@@ -66,6 +116,8 @@ def _make_mock_db() -> MagicMock:
     db.populate_existing.return_value = db
     db.with_for_update.return_value = db
     db.filter.return_value = db
+    db.first = _SequenceGuardMock(mock_db=db, mock_name="mock_db.first")
+    db.all = _SequenceGuardMock(mock_db=db, mock_name="mock_db.all")
     db.first.return_value = None
     db.all.return_value = []
     db.add.return_value = None
@@ -79,7 +131,10 @@ def _make_mock_db() -> MagicMock:
 @pytest.fixture
 def mock_db():
     """Provide a fresh mock DB session for each test."""
-    return _make_mock_db()
+    db = _make_mock_db()
+    yield db
+    if message := db.__dict__.get("_exhausted_mock_message"):
+        raise AssertionError(message)
 
 
 @pytest.fixture

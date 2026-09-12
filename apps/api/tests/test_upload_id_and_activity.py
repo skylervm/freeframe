@@ -12,6 +12,8 @@ import pytest
 
 import apps.api.routers.upload as upload_module
 from apps.api.models.asset import ProcessingStatus
+from apps.api.models.asset import Asset, AssetVersion, MediaFile
+from apps.api.tests.conftest import configure_project_access_results
 
 
 @pytest.fixture
@@ -28,7 +30,9 @@ def presign_rows(mock_db, test_user):
     version.upload_id = "the-real-upload-id"
     version.last_activity_at = None
 
-    mock_db.first.side_effect = [media_file, version]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     return media_file, version
 
 

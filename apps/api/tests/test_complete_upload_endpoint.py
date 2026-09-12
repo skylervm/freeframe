@@ -12,6 +12,8 @@ from botocore.exceptions import ClientError
 
 import apps.api.routers.upload as upload_module
 from apps.api.models.asset import ProcessingOutbox, ProcessingStatus
+from apps.api.models.asset import Asset, AssetVersion, MediaFile
+from apps.api.tests.conftest import configure_project_access_results
 
 MB = 1024 * 1024
 
@@ -35,7 +37,9 @@ def upload_rows(mock_db, test_user):
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
     media_file.file_size_bytes = 23 * MB
 
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     return version, media_file
 
 
@@ -144,7 +148,9 @@ def test_replaying_a_completed_upload_returns_its_existing_status(
     media_file.asset_id = version.asset_id
     media_file.s3_key_raw = "raw/p/a/v/original.mp4"
     media_file.file_size_bytes = 23 * MB
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
 
     dispatched = []
     monkeypatch.setattr(upload_module, "_kick_processing_dispatch", lambda: dispatched.append(version.id))
@@ -168,7 +174,9 @@ def test_replaying_a_failed_upload_is_refused(client, auth_headers, mock_db, tes
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.failed
     media_file = MagicMock(asset_id=version.asset_id, s3_key_raw="raw/p/a/v/original.mp4", file_size_bytes=23 * MB)
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     monkeypatch.setattr(upload_module, "list_upload_parts", lambda k, u: pytest.fail("storage must not be touched"))
 
     resp = client.post("/upload/complete", json=_body(media_file), headers=auth_headers)
@@ -279,7 +287,9 @@ def test_a_mismatched_asset_is_rejected_before_storage_is_touched(
     version.asset_id = uuid.uuid4()
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
-    mock_db.first.return_value = version
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock()}
+    )
     monkeypatch.setattr(upload_module, "list_upload_parts", lambda k, u: pytest.fail("storage must not be touched"))
 
     resp = client.post(
@@ -303,7 +313,9 @@ def test_a_key_that_does_not_belong_to_the_version_is_rejected(
     version.created_by = test_user.id
     version.processing_status = ProcessingStatus.uploading
     # The MediaFile lookup filters on version_id AND s3_key_raw, so a foreign key misses.
-    mock_db.first.side_effect = [version, None]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: None}
+    )
     monkeypatch.setattr(upload_module, "list_upload_parts",
                         lambda k, u: pytest.fail("storage must not be touched"))
 
@@ -337,7 +349,9 @@ def test_abort_marks_the_version_failed_when_the_upload_was_already_gone(
     media_file.file_size_bytes = 23 * MB
     # Second lookup: abort now asks whether the object actually got assembled before
     # deciding this upload failed.
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
 
     def already_gone(k, u):
         raise _client_error("NoSuchUpload", "AbortMultipartUpload")
@@ -370,7 +384,9 @@ def test_abort_does_not_fail_a_version_that_already_finished(
     version.processing_status = ProcessingStatus.ready
     media_file = MagicMock()
     media_file.s3_key_raw = "raw/k"
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
     monkeypatch.setattr(upload_module, "abort_multipart_upload", lambda k, u: None)
 
     resp = client.post(
@@ -394,7 +410,9 @@ def test_abort_surfaces_a_real_storage_failure(
     version.processing_status = ProcessingStatus.uploading
     media_file = MagicMock()
     media_file.s3_key_raw = "raw/k"
-    mock_db.first.side_effect = [version, media_file]
+    configure_project_access_results(
+        mock_db, test_user, {AssetVersion: version, Asset: MagicMock(), MediaFile: media_file}
+    )
 
     def denied(k, u):
         raise _client_error("AccessDenied", "AbortMultipartUpload")

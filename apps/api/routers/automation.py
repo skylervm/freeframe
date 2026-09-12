@@ -22,6 +22,7 @@ from ..models.project import AutomationBootstrapRequest, AutomationBootstrapRene
 from ..models.trash import TrashEntityType, TrashOperation
 from ..models.user import User, UserStatus
 from ..services.dropbox import validate_dropbox_url
+from ..services.s3_service import generate_presigned_get_url
 from ..schemas.bootstrap import BootstrapProjectAdopt, BootstrapProjectCreate, BootstrapProjectResponse, BootstrapTokenRenewal
 from ..middleware.rate_limit import rate_limit
 from ..models.comment import Comment
@@ -559,6 +560,68 @@ def get_review_version(
         "version_number": version.version_number,
         "processing_status": version.processing_status,
     }
+
+
+def _download_response(
+    version: AssetVersion,
+    asset: Asset,
+    db: Session,
+):
+    if version.processing_status in (ProcessingStatus.uploading, ProcessingStatus.failed):
+        raise HTTPException(status_code=409, detail="Version media is not available")
+
+    media_file = db.query(MediaFile).filter(MediaFile.version_id == version.id).first()
+    if not media_file or not media_file.s3_key_raw:
+        raise HTTPException(status_code=409, detail="Version media is not available")
+
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        seconds=settings.automation_download_url_ttl_seconds
+    )
+    return {
+        "version_id": version.id,
+        "asset_id": asset.id,
+        "url": generate_presigned_get_url(
+            media_file.s3_key_raw,
+            expires_in=settings.automation_download_url_ttl_seconds,
+        ),
+        "expires_at": expires_at,
+        "file_size_bytes": media_file.file_size_bytes,
+        "content_type": media_file.mime_type,
+    }
+
+
+@router.get(
+    "/versions/{version_id}/download",
+    dependencies=[Depends(rate_limit("automation_download", 60, 3600))],
+)
+def download_version(
+    version_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    version, asset = _version_in_scope(db, version_id, actor)
+    return _download_response(version, asset, db)
+
+
+@router.get(
+    "/assets/{asset_id}/download",
+    dependencies=[Depends(rate_limit("automation_download", 60, 3600))],
+)
+def download_asset(
+    asset_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    review_version = get_review_version(asset_id, db, actor)
+    asset = _asset_in_scope(db, asset_id, actor)
+    version = db.query(AssetVersion).filter(
+        AssetVersion.id == review_version["id"],
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+    ).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return _download_response(version, asset, db)
 
 
 @router.delete("/assets/{asset_id}", status_code=204)
