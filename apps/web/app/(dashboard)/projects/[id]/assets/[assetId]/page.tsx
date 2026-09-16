@@ -456,16 +456,16 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
         <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} />
       ) : (
-      <div className="flex flex-1 overflow-hidden min-h-0">
+      <div className="flex flex-1 flex-col overflow-y-auto min-h-0 md:flex-row md:overflow-hidden">
         {/* Left: viewer column */}
-        <div className="flex-1 flex flex-col bg-bg-primary overflow-hidden min-w-0">
+        <div className="flex flex-none flex-col min-w-0 h-[56svh] min-h-[16rem] max-h-[28rem] bg-bg-primary overflow-hidden md:flex-1 md:h-auto md:max-h-none">
           {/* Media viewer */}
           {renderMediaViewer()}
         </div>
 
         {/* Right: comments sidebar */}
         {sidebarOpen && (
-          <div className="w-[360px] flex flex-col border-l border-border bg-bg-secondary shrink-0 animate-in slide-in-from-right-2 duration-150">
+          <div className="w-full min-h-[24rem] flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:border-t-0 md:border-l animate-in slide-in-from-right-2 duration-150">
             {/* Tabs (Frame.io pill style) */}
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">

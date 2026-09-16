@@ -796,7 +796,7 @@ function ShareReviewInner({
 }: any) {
   const { asset, versions, isLoading, comments, refetchComments, addComment } = useReview()
   const { currentVersion, isDrawingMode, focusedCommentId } = useReviewStore()
-  const [sidebarOpen, setSidebarOpen] = React.useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches)
+  const [sidebarOpen, setSidebarOpen] = React.useState(true)
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
   const [AnnotationOverlay, setAnnotationOverlay] = React.useState<any>(null)
   const [AnnotationCanvas, setAnnotationCanvas] = React.useState<any>(null)
@@ -880,9 +880,9 @@ function ShareReviewInner({
       </div>
 
       {/* Main: viewer + sidebar */}
-      <div className="relative flex flex-1 overflow-hidden min-h-0">
+      <div className="relative flex flex-1 flex-col overflow-y-auto min-h-0 md:flex-row md:overflow-hidden">
         {/* Media viewer — reuses project components */}
-        <div className="flex-1 flex flex-col bg-bg-primary overflow-hidden min-w-0">
+        <div className="flex flex-none flex-col min-w-0 h-[56svh] min-h-[16rem] max-h-[28rem] bg-bg-primary overflow-hidden md:flex-1 md:h-auto md:max-h-none">
           {asset.asset_type === 'video' && versionReady && VideoPlayer ? (
             <VideoPlayer
               assetId={asset.id}
@@ -920,7 +920,7 @@ function ShareReviewInner({
 
         {/* Right sidebar — reuses project comment panel */}
         {sidebarOpen && (
-          <div className="w-full md:w-[360px] absolute inset-y-0 right-0 z-20 md:static md:inset-auto flex flex-col border-l-0 md:border-l border-border bg-bg-secondary shrink-0">
+          <div className="w-full min-h-[24rem] static flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:static md:inset-auto md:border-t-0 md:border-l">
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
                 <button onClick={() => setActiveTab('comments')} className={`flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all ${activeTab === 'comments' ? 'bg-bg-hover text-text-primary shadow-sm' : 'text-text-tertiary'}`}>

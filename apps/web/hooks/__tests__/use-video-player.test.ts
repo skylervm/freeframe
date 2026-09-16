@@ -61,3 +61,36 @@ describe('useVideoPlayer — detached gates global-store writes', () => {
     }
   })
 })
+
+describe('useVideoPlayer fullscreen', () => {
+  function nativeFullscreenContainer() {
+    const container = document.createElement('div')
+    const video = document.createElement('video') as HTMLVideoElement & { webkitEnterFullscreen?: () => void }
+    video.webkitEnterFullscreen = vi.fn()
+    container.appendChild(video)
+    return { container, video }
+  }
+
+  it('uses the iPhone video fullscreen API when the container API is unavailable', () => {
+    const { result } = renderHook(() => useVideoPlayer(SRC))
+    const { container, video } = nativeFullscreenContainer()
+    Object.defineProperty(container, 'requestFullscreen', { configurable: true, value: undefined })
+
+    act(() => result.current.toggleFullscreen(container))
+
+    expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the iPhone video API when the container request is rejected', async () => {
+    const { result } = renderHook(() => useVideoPlayer(SRC))
+    const { container, video } = nativeFullscreenContainer()
+    Object.defineProperty(container, 'requestFullscreen', {
+      configurable: true,
+      value: vi.fn().mockRejectedValue(new Error('unsupported')),
+    })
+
+    await act(async () => result.current.toggleFullscreen(container))
+
+    expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce()
+  })
+})
