@@ -22,6 +22,10 @@ function attach(ref: { current: HTMLVideoElement | null }, el: Partial<HTMLVideo
   ref.current = el as HTMLVideoElement
 }
 
+function mockIOS() {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'iPhone' })
+}
+
 describe('useVideoPlayer — detached gates global-store writes', () => {
   it('seek writes playheadTime to the store when ATTACHED (normal reviewer)', () => {
     const { result } = renderHook(() => useVideoPlayer(SRC))
@@ -72,6 +76,7 @@ describe('useVideoPlayer fullscreen', () => {
   }
 
   it('uses the iPhone video fullscreen API when the container API is unavailable', () => {
+    mockIOS()
     const { result } = renderHook(() => useVideoPlayer(SRC))
     const { container, video } = nativeFullscreenContainer()
     Object.defineProperty(container, 'requestFullscreen', { configurable: true, value: undefined })
@@ -81,16 +86,70 @@ describe('useVideoPlayer fullscreen', () => {
     expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce()
   })
 
-  it('falls back to the iPhone video API when the container request is rejected', async () => {
+  it('prefers the iPhone video fullscreen API over the container API', () => {
+    mockIOS()
     const { result } = renderHook(() => useVideoPlayer(SRC))
     const { container, video } = nativeFullscreenContainer()
+    const requestFullscreen = vi.fn()
     Object.defineProperty(container, 'requestFullscreen', {
       configurable: true,
-      value: vi.fn().mockRejectedValue(new Error('unsupported')),
+      value: requestFullscreen,
+    })
+
+    act(() => result.current.toggleFullscreen(container))
+
+    expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce()
+    expect(requestFullscreen).not.toHaveBeenCalled()
+  })
+
+  it('uses container fullscreen outside iOS even when WebKit video fullscreen exists', () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Macintosh' })
+    const { result } = renderHook(() => useVideoPlayer(SRC))
+    const { container, video } = nativeFullscreenContainer()
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(container, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    })
+
+    act(() => result.current.toggleFullscreen(container))
+
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    expect(video.webkitEnterFullscreen).not.toHaveBeenCalled()
+  })
+
+  it('does not fall back to WebKit video fullscreen when non-iOS container fullscreen rejects', async () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Macintosh' })
+    const { result } = renderHook(() => useVideoPlayer(SRC))
+    const { container, video } = nativeFullscreenContainer()
+    const requestFullscreen = vi.fn().mockRejectedValue(new Error('unsupported'))
+    Object.defineProperty(container, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
     })
 
     await act(async () => result.current.toggleFullscreen(container))
 
+    expect(requestFullscreen).toHaveBeenCalledOnce()
+    expect(video.webkitEnterFullscreen).not.toHaveBeenCalled()
+  })
+
+  it('falls back to container fullscreen when the iPhone video API throws synchronously', () => {
+    mockIOS()
+    const { result } = renderHook(() => useVideoPlayer(SRC))
+    const { container, video } = nativeFullscreenContainer()
+    video.webkitEnterFullscreen = vi.fn(() => {
+      throw new Error('native fullscreen unavailable')
+    })
+    const requestFullscreen = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(container, 'requestFullscreen', {
+      configurable: true,
+      value: requestFullscreen,
+    })
+
+    act(() => result.current.toggleFullscreen(container))
+
     expect(video.webkitEnterFullscreen).toHaveBeenCalledOnce()
+    expect(requestFullscreen).toHaveBeenCalledOnce()
   })
 })
