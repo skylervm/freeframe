@@ -177,6 +177,8 @@ export function useVideoPlayer(
         setBuffered(video.buffered.end(video.buffered.length - 1))
       }
     }
+    const onWebkitBeginFullscreen = () => setIsFullscreen(true)
+    const onWebkitEndFullscreen = () => setIsFullscreen(false)
 
     video.addEventListener('loadedmetadata', onLoadedMetadata)
     video.addEventListener('timeupdate', onTimeUpdate)
@@ -188,6 +190,8 @@ export function useVideoPlayer(
     video.addEventListener('ended', onEnded)
     video.addEventListener('error', onError)
     video.addEventListener('progress', onProgress)
+    video.addEventListener('webkitbeginfullscreen', onWebkitBeginFullscreen)
+    video.addEventListener('webkitendfullscreen', onWebkitEndFullscreen)
 
     const isHlsSource = src.includes('.m3u8')
 
@@ -241,6 +245,8 @@ export function useVideoPlayer(
       video.removeEventListener('ended', onEnded)
       video.removeEventListener('error', onError)
       video.removeEventListener('progress', onProgress)
+      video.removeEventListener('webkitbeginfullscreen', onWebkitBeginFullscreen)
+      video.removeEventListener('webkitendfullscreen', onWebkitEndFullscreen)
 
       if (hlsRef.current) {
         hlsRef.current.destroy()
@@ -309,18 +315,36 @@ export function useVideoPlayer(
   }, [])
 
   const toggleFullscreen = useCallback((containerEl: HTMLElement) => {
+    const nativeVideo = containerEl.querySelector('video') as (HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void
+    }) | null
     const enterNativeVideoFullscreen = () => {
-      const video = containerEl.querySelector('video') as (HTMLVideoElement & {
-        webkitEnterFullscreen?: () => void
-      }) | null
-      video?.webkitEnterFullscreen?.()
+      nativeVideo?.webkitEnterFullscreen?.()
     }
+    const enterContainerFullscreen = () => {
+      try {
+        containerEl.requestFullscreen?.().catch(() => {})
+      } catch {
+        // Fullscreen is unavailable in this browser; keep the inline player usable.
+      }
+    }
+    const isIOS = typeof navigator !== 'undefined' && (
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    )
 
     if (!document.fullscreenElement) {
-      if (containerEl.requestFullscreen) {
-        containerEl.requestFullscreen().catch(enterNativeVideoFullscreen)
+      // iPhone does not reliably fullscreen arbitrary containers. Prefer its
+      // video API whenever it is exposed so playback, controls, and rotation
+      // stay in the platform's native fullscreen player.
+      if (isIOS && nativeVideo?.webkitEnterFullscreen) {
+        try {
+          enterNativeVideoFullscreen()
+        } catch {
+          enterContainerFullscreen()
+        }
       } else {
-        enterNativeVideoFullscreen()
+        enterContainerFullscreen()
       }
     } else {
       document.exitFullscreen().catch(() => {})
