@@ -307,8 +307,8 @@ export function ProgressBar({
     [duration],
   )
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       const time = getTimeFromEvent(e.clientX)
       setHoverTime(time)
       const track = trackRef.current
@@ -324,44 +324,37 @@ export function ProgressBar({
     [isDragging, getTimeFromEvent, onSeek, seekPreview],
   )
 
-  const handleMouseLeave = useCallback(() => {
+  const handlePointerLeave = useCallback(() => {
     if (!isDragging) {
       setHoverTime(null)
       clearPreview()
     }
   }, [isDragging, clearPreview])
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
       setIsDragging(true)
       onSeek(getTimeFromEvent(e.clientX))
     },
     [getTimeFromEvent, onSeek],
   )
 
-  // Global mouse up / move to handle drag outside track
-  useEffect(() => {
-    if (!isDragging) return
+  const finishDragging = useCallback(() => {
+    setIsDragging(false)
+    setHoverTime(null)
+    clearPreview()
+  }, [clearPreview])
 
-    const handleGlobalMouseMove = (e: MouseEvent) => {
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDragging) return
+      finishDragging()
       onSeek(getTimeFromEvent(e.clientX))
-    }
-
-    const handleGlobalMouseUp = (e: MouseEvent) => {
-      setIsDragging(false)
-      setHoverTime(null)
-      clearPreview()
-      onSeek(getTimeFromEvent(e.clientX))
-    }
-
-    window.addEventListener('mousemove', handleGlobalMouseMove)
-    window.addEventListener('mouseup', handleGlobalMouseUp)
-    return () => {
-      window.removeEventListener('mousemove', handleGlobalMouseMove)
-      window.removeEventListener('mouseup', handleGlobalMouseUp)
-    }
-  }, [isDragging, getTimeFromEvent, onSeek, clearPreview])
+    },
+    [isDragging, getTimeFromEvent, onSeek, finishDragging],
+  )
 
   // Separate timecoded comments
   const pointMarkers = comments.filter(
@@ -379,10 +372,13 @@ export function ProgressBar({
       {/* Track area */}
       <div
         ref={trackRef}
-        className="relative w-full h-1 group-hover/progress:h-1.5 transition-all duration-150 cursor-pointer bg-border rounded-full"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-        onMouseDown={handleMouseDown}
+        className="relative w-full h-1 touch-none group-hover/progress:h-1.5 transition-all duration-150 cursor-pointer bg-border rounded-full"
+        onPointerMove={handlePointerMove}
+        onPointerLeave={handlePointerLeave}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={finishDragging}
+        onLostPointerCapture={finishDragging}
       >
         {/* Buffered range */}
         <div

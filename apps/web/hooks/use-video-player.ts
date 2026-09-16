@@ -309,8 +309,19 @@ export function useVideoPlayer(
   }, [])
 
   const toggleFullscreen = useCallback((containerEl: HTMLElement) => {
+    const enterNativeVideoFullscreen = () => {
+      const video = containerEl.querySelector('video') as (HTMLVideoElement & {
+        webkitEnterFullscreen?: () => void
+      }) | null
+      video?.webkitEnterFullscreen?.()
+    }
+
     if (!document.fullscreenElement) {
-      containerEl.requestFullscreen().catch(() => {})
+      if (containerEl.requestFullscreen) {
+        containerEl.requestFullscreen().catch(enterNativeVideoFullscreen)
+      } else {
+        enterNativeVideoFullscreen()
+      }
     } else {
       document.exitFullscreen().catch(() => {})
     }
