@@ -2,11 +2,12 @@
 
 import * as React from 'react'
 import { usePathname } from 'next/navigation'
-import { Search, ChevronRight, PanelRightClose, PanelRightOpen } from 'lucide-react'
+import { Search, ChevronRight, Menu, PanelRightClose, PanelRightOpen } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { useViewStore } from '@/stores/view-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useMobileNavigation } from './mobile-navigation-context'
 
 interface HeaderProps {
   onSearchOpen: () => void
@@ -55,15 +56,28 @@ function buildBreadcrumbs(pathname: string, dynamicLabels: Record<string, string
 export function Header({ onSearchOpen }: HeaderProps) {
   const pathname = usePathname()
   const { rightPanelOpen, toggleRightPanel } = useViewStore()
+  const { isOpen: mobileNavigationOpen, toggle: toggleMobileNavigation } = useMobileNavigation()
   const { labels, extraCrumbs } = useBreadcrumbStore()
   const urlCrumbs = buildBreadcrumbs(pathname, labels)
   const breadcrumbs = [...urlCrumbs, ...extraCrumbs.map((c) => ({ label: c.label, href: c.href ?? '' }))]
 
   return (
     <header className="sticky top-0 z-20 flex h-11 items-center justify-between border-b border-border bg-bg-primary/90 backdrop-blur-sm px-4">
-      {/* Breadcrumbs */}
-      <nav className="flex items-center gap-1 text-[13px]">
-        {breadcrumbs.map((crumb, index) => {
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          type="button"
+          onClick={(event) => toggleMobileNavigation(event.currentTarget)}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+          aria-label={mobileNavigationOpen ? 'Close navigation' : 'Open navigation'}
+          aria-controls="dashboard-navigation"
+          aria-expanded={mobileNavigationOpen}
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+
+        {/* Breadcrumbs */}
+        <nav className="flex min-w-0 items-center gap-1 overflow-hidden text-[13px]">
+          {breadcrumbs.map((crumb, index) => {
           const isLast = index === breadcrumbs.length - 1
           return (
             <React.Fragment key={`${crumb.href}-${index}`}>
@@ -84,8 +98,9 @@ export function Header({ onSearchOpen }: HeaderProps) {
               )}
             </React.Fragment>
           )
-        })}
-      </nav>
+          })}
+        </nav>
+      </div>
 
       {/* Right side actions */}
       <div className="flex items-center gap-1.5">

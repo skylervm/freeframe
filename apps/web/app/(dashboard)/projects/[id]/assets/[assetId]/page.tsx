@@ -22,7 +22,9 @@ import { useSSE } from '@/hooks/use-sse'
 import { api } from '@/lib/api'
 import { useUploadStore } from '@/stores/upload-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useMobileNavigation } from '@/components/layout/mobile-navigation-context'
 import { canCompare } from '@/lib/compare-time'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -32,6 +34,9 @@ import {
   Columns2,
   Upload,
   GitCompareArrows,
+  Menu,
+  MoreHorizontal,
+  Share2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -50,16 +55,19 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
-  const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
+  const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setCurrentVersion, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
   const startVersionUpload = useUploadStore((s) => s.startVersionUpload)
   const versionFileInputRef = useRef<HTMLInputElement>(null)
+  const mobileMoreActionsRef = useRef<HTMLButtonElement>(null)
   const setExtraCrumbs = useBreadcrumbStore((s) => s.setExtraCrumbs)
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
+  const { isOpen: mobileNavigationOpen, toggle: toggleMobileNavigation } = useMobileNavigation()
   usePageTitle(asset?.name ?? null)
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('comments')
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [mobileShareOpen, setMobileShareOpen] = useState(false)
   const deepLinkApplied = useRef(false)
 
   // Fetch folder tree to build the folder path for the breadcrumb
@@ -178,6 +186,23 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const navigateAsset = (assetId: string) => {
     router.push(`/projects/${projectId}/assets/${assetId}`)
   }
+
+  const openCompare = () => {
+    const readyVersions = versions
+      .filter((v) => v.processing_status === 'ready')
+      .sort((a, b) => a.version_number - b.version_number)
+    const cur = currentVersion ?? readyVersions[readyVersions.length - 1]
+    const prev = [...readyVersions].reverse().find((v) => v.version_number < cur.version_number)
+      ?? readyVersions.find((v) => v.id !== cur.id)
+    if (!prev) return
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('compare', prev.id)
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false })
+  }
+
+  const openVersionUpload = () => versionFileInputRef.current?.click()
+
+  const sortedVersions = [...versions].sort((a, b) => a.version_number - b.version_number)
 
   // Keyboard navigation for prev/next asset
   useEffect(() => {
@@ -349,6 +374,16 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
         {/* Left: back + breadcrumb */}
         <div className="flex items-center gap-1 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={(event) => toggleMobileNavigation(event.currentTarget)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+            aria-label={mobileNavigationOpen ? 'Close navigation' : 'Open navigation'}
+            aria-controls="dashboard-navigation"
+            aria-expanded={mobileNavigationOpen}
+          >
+            <Menu className="h-4 w-4" />
+          </button>
           <Link
             href={`/projects/${asset.project_id}`}
             className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors shrink-0"
@@ -364,7 +399,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
         {/* Center: asset navigation */}
         {totalAssets > 1 && (
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="hidden shrink-0 items-center gap-1 md:flex">
             <button
               onClick={() => prevAsset && navigateAsset(prevAsset.id)}
               disabled={!prevAsset}
@@ -406,22 +441,13 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               setTimeout(() => refetchVersions(), 2500)
             }}
           />
-          <VersionSwitcher versions={versions} />
+          <div className="hidden md:block">
+            <VersionSwitcher versions={versions} />
+          </div>
           {asset && canCompare(asset.asset_type, versions) && (
             <button
-              onClick={() => {
-                const readyVersions = versions
-                  .filter((v) => v.processing_status === 'ready')
-                  .sort((a, b) => a.version_number - b.version_number)
-                const cur = currentVersion ?? readyVersions[readyVersions.length - 1]
-                const prev = [...readyVersions].reverse().find((v) => v.version_number < cur.version_number)
-                  ?? readyVersions.find((v) => v.id !== cur.id)
-                if (!prev) return
-                const p = new URLSearchParams(searchParams.toString())
-                p.set('compare', prev.id)
-                router.replace(`${pathname}?${p.toString()}`, { scroll: false })
-              }}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              onClick={openCompare}
+              className="hidden h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:inline-flex"
               title="Compare versions"
             >
               <GitCompareArrows className="h-3.5 w-3.5" />
@@ -429,14 +455,124 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             </button>
           )}
           <button
-            onClick={() => versionFileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            onClick={openVersionUpload}
+            className="hidden h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:inline-flex"
             title="Upload new version"
           >
             <Upload className="h-3.5 w-3.5" />
             New Version
           </button>
-          <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          <div className="hidden md:block">
+            <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          </div>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                ref={mobileMoreActionsRef}
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+                aria-label="More review actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={6}
+                className="z-[100] min-w-[180px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl md:hidden"
+              >
+                {totalAssets > 1 && (
+                  <>
+                    <DropdownMenu.Item
+                      disabled={!prevAsset}
+                      onSelect={() => prevAsset && navigateAsset(prevAsset.id)}
+                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous asset
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      disabled={!nextAsset}
+                      onSelect={() => nextAsset && navigateAsset(nextAsset.id)}
+                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                      Next asset
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                  </>
+                )}
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover">
+                    Version v{currentVersion?.version_number ?? sortedVersions.at(-1)?.version_number ?? 1}
+                    <ChevronRight className="h-4 w-4" />
+                  </DropdownMenu.SubTrigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.SubContent className="z-[101] min-w-[140px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl">
+                      {sortedVersions.map((version) => {
+                        const unavailable = version.processing_status !== 'ready'
+                        return (
+                          <DropdownMenu.Item
+                            key={version.id}
+                            disabled={unavailable}
+                            onSelect={() => setCurrentVersion(version)}
+                            className={cn(
+                              'flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm outline-none transition-colors',
+                              currentVersion?.id === version.id
+                                ? 'bg-accent/10 text-accent'
+                                : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover',
+                              unavailable && 'cursor-not-allowed opacity-50',
+                            )}
+                          >
+                            <span>v{version.version_number}</span>
+                            <span className="text-xs capitalize text-text-tertiary">{version.processing_status}</span>
+                          </DropdownMenu.Item>
+                        )
+                      })}
+                    </DropdownMenu.SubContent>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Sub>
+                {asset && canCompare(asset.asset_type, versions) && (
+                  <DropdownMenu.Item
+                    onSelect={openCompare}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                  >
+                    <GitCompareArrows className="h-4 w-4" />
+                    Compare versions
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item
+                  onSelect={openVersionUpload}
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                >
+                  <Upload className="h-4 w-4" />
+                  New version
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => setMobileShareOpen(true)}
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <ShareDialog
+            assetId={asset.id}
+            assetName={asset.name}
+            projectId={projectId}
+            asset={asset}
+            open={mobileShareOpen}
+            onOpenChange={setMobileShareOpen}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              mobileMoreActionsRef.current?.focus()
+            }}
+            hideTrigger
+            mobileDialog
+          />
           <button
             onClick={() => setSidebarOpen((p) => !p)}
             className={cn(
