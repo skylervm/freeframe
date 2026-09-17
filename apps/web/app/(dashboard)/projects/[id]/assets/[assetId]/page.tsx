@@ -35,6 +35,7 @@ import {
   Upload,
   GitCompareArrows,
   Menu,
+  MessageSquare,
   MoreHorizontal,
   Share2,
 } from 'lucide-react'
@@ -576,7 +577,21 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           <button
             onClick={() => setSidebarOpen((p) => !p)}
             className={cn(
-              'flex items-center justify-center h-8 w-8 rounded-md transition-colors',
+              'flex h-8 w-8 items-center justify-center rounded-md transition-colors md:hidden',
+              sidebarOpen
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
+            )}
+            aria-label={sidebarOpen ? 'Hide comments' : 'Show comments'}
+            aria-controls={sidebarOpen ? 'review-comments' : undefined}
+            aria-expanded={sidebarOpen}
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setSidebarOpen((p) => !p)}
+            className={cn(
+              'hidden h-8 w-8 items-center justify-center rounded-md transition-colors md:flex',
               sidebarOpen
                 ? 'bg-bg-hover text-text-primary'
                 : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
@@ -601,7 +616,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
         {/* Right: comments sidebar */}
         {sidebarOpen && (
-          <div className="w-full min-h-[24rem] flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:border-t-0 md:border-l animate-in slide-in-from-right-2 duration-150">
+          <div id="review-comments" className="w-full min-h-[24rem] flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:border-t-0 md:border-l animate-in slide-in-from-right-2 duration-150">
             {/* Tabs (Frame.io pill style) */}
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
