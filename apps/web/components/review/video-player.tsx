@@ -242,6 +242,32 @@ export function VideoPlayer({
     toggleFullscreen,
   } = player;
 
+  // Intrinsic aspect ratio of the loaded video, used to size the compact
+  // (phone-portrait) box. Null until metadata arrives; the render falls back to
+  // 16:9 so the box does not jump for the common case.
+  const [intrinsicRatio, setIntrinsicRatio] = useState<number | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const readRatio = () => {
+      const { videoWidth, videoHeight } = video;
+      if (videoWidth > 0 && videoHeight > 0) {
+        setIntrinsicRatio(videoWidth / videoHeight);
+      }
+    };
+
+    readRatio();
+    video.addEventListener("loadedmetadata", readRatio);
+    // HLS quality switches fire `resize` without a fresh `loadedmetadata`.
+    video.addEventListener("resize", readRatio);
+    return () => {
+      video.removeEventListener("loadedmetadata", readRatio);
+      video.removeEventListener("resize", readRatio);
+    };
+  }, [videoRef, streamUrl]);
+
   // Register pause handler with review provider
   useEffect(() => {
     registerPauseHandler(pause);
@@ -337,9 +363,16 @@ export function VideoPlayer({
         className={cn(
           "review-video-area relative bg-black overflow-hidden cursor-pointer",
           compact && !isFullscreen
-            ? "aspect-video w-full shrink-0 md:aspect-auto md:flex-1 md:min-h-0"
+            ? "aspect-[var(--review-aspect)] w-full shrink-0 md:aspect-auto md:flex-1 md:min-h-0"
             : "flex-1 min-h-0",
         )}
+        style={
+          /* A custom property, not an inline `aspect-ratio`: an inline value
+             would also win on md+, where `md:aspect-auto` must take over. */
+          compact && !isFullscreen
+            ? ({ "--review-aspect": String(intrinsicRatio ?? 16 / 9) } as React.CSSProperties)
+            : undefined
+        }
         onClick={handleContainerClick}
       >
         <video
