@@ -193,6 +193,7 @@ export function AssetGrid({
   }, [assets, sortKey, sortDirection])
 
   const showFolders = !flattenFolders && folders && folders.length > 0
+  const mobileActionItems = React.Children.toArray(actions)
 
   if (isLoading) {
     return (
@@ -244,22 +245,51 @@ export function AssetGrid({
 
       {/* ─── Navigator Bar (Frame.io style) ─────────────────────────────── */}
       {!shareMode && (
-        <div className="flex items-center gap-1 border-b border-border pb-2.5">
-          {/* Left group: Appearance + Fields + Sort */}
-          <AppearancePopover />
+        <div className="flex min-w-0 items-center gap-1 border-b border-border pb-2.5">
+          {/* Phone controls deliberately use a menu so this row cannot widen the page. */}
+          <div className="flex min-w-0 items-center gap-0.5 md:hidden">
+            <AppearancePopover compact />
+            <SortPopover compact />
+          </div>
 
-          <div className="h-4 w-px bg-border mx-0.5" />
-
-          <SortPopover />
-
-          <div className="flex-1" />
-
-          {/* Right group: action buttons passed from parent */}
-          {actions && (
-            <div className="flex items-center gap-2">
-              {actions}
-            </div>
+          {mobileActionItems.length > 0 && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  aria-label="More project actions"
+                  className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary md:hidden"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={6}
+                  className="z-50 flex min-w-48 flex-col gap-1 rounded-xl border border-white/10 bg-[#1a1a1f] p-1.5 shadow-2xl [&>button]:w-full [&>button]:justify-start"
+                >
+                  {mobileActionItems.map((action, index) => (
+                    <DropdownMenu.Item key={index} asChild>
+                      {action}
+                    </DropdownMenu.Item>
+                  ))}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
           )}
+
+          {/* Desktop keeps the existing full navigator layout. */}
+          <div className="hidden min-w-0 flex-1 items-center gap-1 md:flex">
+            <AppearancePopover />
+            <div className="mx-0.5 h-4 w-px bg-border" />
+            <SortPopover />
+            <div className="flex-1" />
+            {actions && (
+              <div className="flex items-center gap-2">
+                {actions}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

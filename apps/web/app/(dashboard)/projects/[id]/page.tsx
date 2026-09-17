@@ -869,19 +869,22 @@ export default function ProjectDetailPage() {
                   } catch {}
                 }
               }}
-              actions={
-                <>
-                  {canManageMembers && (
+              actions={[
+                  canManageMembers && (
                     <Button
+                      key="members"
                       variant="secondary"
                       size="sm"
                       onClick={() => setMembersDialogOpen(true)}
+                      aria-label="Manage project members"
                     >
                       <Users className="h-4 w-4" />
+                      <span className="md:hidden">Members</span>
                     </Button>
-                  )}
-                  {canShare && (
+                  ),
+                  canShare && (
                     <Button
+                      key="share"
                       variant="secondary"
                       size="sm"
                       onClick={() => openShareDialog([], [])}
@@ -889,9 +892,10 @@ export default function ProjectDetailPage() {
                       <Share2 className="h-4 w-4" />
                       Share
                     </Button>
-                  )}
-                  {canCreateFolder && (
+                  ),
+                  canCreateFolder && (
                     <button
+                      key="new-folder"
                       className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover text-[13px] transition-colors"
                       onClick={() => {
                         setFolderDialogParentId(currentFolderId);
@@ -901,15 +905,14 @@ export default function ProjectDetailPage() {
                       <FolderPlus className="h-4 w-4" />
                       New Folder
                     </button>
-                  )}
-                  {canUpload && (
-                    <Button size="sm" onClick={() => setUploadOpen(true)}>
+                  ),
+                  canUpload && (
+                    <Button key="upload" size="sm" onClick={() => setUploadOpen(true)}>
                       <Upload className="h-4 w-4" />
                       Upload
                     </Button>
-                  )}
-                </>
-              }
+                  ),
+              ]}
             />
           )}
 
