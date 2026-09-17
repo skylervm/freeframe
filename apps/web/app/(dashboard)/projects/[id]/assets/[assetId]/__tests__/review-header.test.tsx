@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -90,16 +92,39 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(screen.getByText('Version switcher').parentElement).toHaveClass('hidden', 'md:block')
   })
 
-  it('pins the phone viewer above a bounded comments pane with a persistent input', () => {
+  it('stacks a naturally sized phone-portrait video over a bounded comments pane with a persistent input', () => {
     render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
 
     const viewer = screen.getByTestId('video-player').parentElement
     const comments = document.getElementById('review-comments')
     const reviewSurface = screen.getByText(asset.name).closest('.absolute')
     expect(reviewSurface).toHaveClass('h-[100svh]', 'md:h-auto')
-    expect(viewer).toHaveClass('h-[min(56svh,28rem,calc(100svh-15rem))]', 'shrink-0')
+    // Video sizes itself to a natural 16:9 box, so the column must not carry a
+    // viewport-height box that would letterbox it in portrait.
+    expect(viewer).toHaveClass('review-viewer', 'shrink-0')
+    expect(viewer?.className).not.toContain('56svh')
+    expect(viewer?.parentElement).toHaveClass('review-workspace', 'flex-col', 'md:flex-row')
     expect(comments).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden')
     expect(comments?.parentElement).toHaveClass('overflow-hidden')
     expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+  })
+
+  it('turns the review surface into two columns in phone landscape', () => {
+    // jsdom cannot evaluate media queries, so pin the CSS contract the layout
+    // depends on: the orientation rule, scoped to the review-only hooks.
+    const css = readFileSync(
+      path.resolve(__dirname, '../../../../../../globals.css'),
+      'utf8',
+    )
+    const block = css.slice(
+      css.indexOf('@media (max-width: 767px) and (orientation: landscape)'),
+    )
+
+    expect(block).not.toHaveLength(0)
+    expect(block).toContain('.review-workspace {')
+    expect(block).toContain('.review-workspace .review-viewer {')
+    expect(block).toContain('.review-workspace .review-player {')
+    expect(block).toContain('.review-workspace .review-video-area {')
+    expect(block).toContain('.review-workspace #review-comments {')
   })
 })

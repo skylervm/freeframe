@@ -314,7 +314,8 @@ export function ProgressBar({
       const track = trackRef.current
       if (track) {
         const rect = track.getBoundingClientRect()
-        setHoverX(e.clientX - rect.left)
+        // Clamp to the visual track so the tooltip cannot sit over the inset gutters
+        setHoverX(Math.max(0, Math.min(rect.width, e.clientX - rect.left)))
       }
       if (isDragging) {
         onSeek(time)
@@ -369,10 +370,13 @@ export function ProgressBar({
 
   return (
     <div className={cn('relative flex flex-col w-full group/progress py-1', className)}>
-      {/* Track area */}
+      {/* Touch target — generous and inset from the screen edges on phones,
+          unchanged on md+ so the desktop timeline keeps its current geometry.
+          Seek time is mapped from the inner visual track's rect and clamped,
+          so a press in either inset gutter reaches 0 / duration. */}
       <div
-        ref={trackRef}
-        className="relative w-full h-1 touch-none group-hover/progress:h-1.5 transition-all duration-150 cursor-pointer bg-border rounded-full"
+        data-testid="progress-hit-area"
+        className="relative w-full touch-none cursor-pointer px-3 py-4 md:px-0 md:py-0"
         onPointerMove={handlePointerMove}
         onPointerLeave={handlePointerLeave}
         onPointerDown={handlePointerDown}
@@ -380,94 +384,102 @@ export function ProgressBar({
         onPointerCancel={finishDragging}
         onLostPointerCapture={finishDragging}
       >
-        {/* Buffered range */}
         <div
-          className="absolute inset-y-0 left-0 bg-border-secondary rounded-full"
-          style={{ width: `${bufferedPercent}%` }}
-        />
+          ref={trackRef}
+          data-testid="progress-track"
+          className="relative w-full h-1 group-hover/progress:h-1.5 transition-all duration-150 bg-border rounded-full"
+        >
+          {/* Buffered range */}
+          <div
+            className="absolute inset-y-0 left-0 bg-border-secondary rounded-full"
+            style={{ width: `${bufferedPercent}%` }}
+          />
 
-        {/* Time-range comment spans */}
-        {rangeMarkers.map((c) => {
-          if (c.timecode_start === null || c.timecode_end === null) return null
-          const left = timeToPercent(c.timecode_start)
-          const right = timeToPercent(c.timecode_end)
-          return (
+          {/* Time-range comment spans */}
+          {rangeMarkers.map((c) => {
+            if (c.timecode_start === null || c.timecode_end === null) return null
+            const left = timeToPercent(c.timecode_start)
+            const right = timeToPercent(c.timecode_end)
+            return (
+              <div
+                key={c.id}
+                className="absolute inset-y-0 bg-yellow-400/40 rounded-full pointer-events-none"
+                style={{
+                  left: `${left}%`,
+                  width: `${right - left}%`,
+                }}
+              />
+            )
+          })}
+
+          {/* Playback progress */}
+          <div
+            className="absolute inset-y-0 left-0 rounded-full"
+            style={{
+              width: `${playPercent}%`,
+              background: 'linear-gradient(90deg, #6366f1, #818cf8)',
+            }}
+          />
+
+          {/* Playhead thumb */}
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-accent shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity pointer-events-none z-10"
+            style={{ left: `${playPercent}%`, transform: 'translateX(-50%) translateY(-50%)' }}
+          />
+
+          {/* Frame preview + time tooltip — anchored to the visual track */}
+          {hoverTime !== null && (
             <div
-              key={c.id}
-              className="absolute inset-y-0 bg-yellow-400/40 rounded-full pointer-events-none"
-              style={{
-                left: `${left}%`,
-                width: `${right - left}%`,
-              }}
-            />
-          )
-        })}
-
-        {/* Playback progress */}
-        <div
-          className="absolute inset-y-0 left-0 rounded-full"
-          style={{
-            width: `${playPercent}%`,
-            background: 'linear-gradient(90deg, #6366f1, #818cf8)',
-          }}
-        />
-
-        {/* Playhead thumb */}
-        <div
-          className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-accent shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity pointer-events-none z-10"
-          style={{ left: `${playPercent}%`, transform: 'translateX(-50%) translateY(-50%)' }}
-        />
+              className="absolute -top-2 z-30 pointer-events-none"
+              style={{ left: hoverX, transform: 'translateX(-50%) translateY(-100%)' }}
+            >
+              {/* Frame preview */}
+              {previewImage && (
+                <div className="mb-1 rounded-md overflow-hidden border border-white/15 shadow-2xl">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={previewImage} alt="" className="w-40 object-contain bg-black" />
+                </div>
+              )}
+              {/* Time label */}
+              <div className="flex justify-center">
+                <span className="bg-black/90 text-white text-[11px] font-mono px-2 py-0.5 rounded-md">
+                  {formatTimecode(hoverTime)}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Comment markers row — below the progress bar */}
       {pointMarkers.length > 0 && (
-        <div className="relative w-full h-6 mt-0.5">
-          {pointMarkers.map((c, idx) => {
-            if (c.timecode_start === null) return null
-            const left = timeToPercent(c.timecode_start)
-            const authorName = c.author?.name ?? c.guest_author?.name ?? 'Unknown'
-            const initials = getInitials(authorName)
-            const color = getAvatarColor(authorName)
-            const isHovered = hoveredCommentId === c.id
+        <div className="w-full px-3 md:px-0">
+          <div className="relative w-full h-6 mt-0.5">
+            {pointMarkers.map((c, idx) => {
+              if (c.timecode_start === null) return null
+              const left = timeToPercent(c.timecode_start)
+              const authorName = c.author?.name ?? c.guest_author?.name ?? 'Unknown'
+              const initials = getInitials(authorName)
+              const color = getAvatarColor(authorName)
+              const isHovered = hoveredCommentId === c.id
 
-            return (
-              <CommentMarker
-                key={c.id}
-                comment={c}
-                index={idx}
-                leftPercent={left}
-                authorName={authorName}
-                initials={initials}
-                color={color}
-                isHovered={isHovered}
-                isFocused={focusedCommentId === c.id}
-                onHover={() => setHoveredCommentId(c.id)}
-                onLeave={() => setHoveredCommentId(null)}
-                onSeek={onSeek}
-              />
-            )
-          })}
-        </div>
-      )}
-
-      {/* Frame preview + time tooltip on bar hover */}
-      {hoverTime !== null && (
-        <div
-          className="absolute -top-2 z-30 pointer-events-none"
-          style={{ left: hoverX, transform: 'translateX(-50%) translateY(-100%)' }}
-        >
-          {/* Frame preview */}
-          {previewImage && (
-            <div className="mb-1 rounded-md overflow-hidden border border-white/15 shadow-2xl">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previewImage} alt="" className="w-40 object-contain bg-black" />
-            </div>
-          )}
-          {/* Time label */}
-          <div className="flex justify-center">
-            <span className="bg-black/90 text-white text-[11px] font-mono px-2 py-0.5 rounded-md">
-              {formatTimecode(hoverTime)}
-            </span>
+              return (
+                <CommentMarker
+                  key={c.id}
+                  comment={c}
+                  index={idx}
+                  leftPercent={left}
+                  authorName={authorName}
+                  initials={initials}
+                  color={color}
+                  isHovered={isHovered}
+                  isFocused={focusedCommentId === c.id}
+                  onHover={() => setHoveredCommentId(c.id)}
+                  onLeave={() => setHoveredCommentId(null)}
+                  onSeek={onSeek}
+                />
+              )
+            })}
           </div>
         </div>
       )}

@@ -322,7 +322,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           <VideoPlayer
             assetId={asset.id}
             comments={comments}
-            className="flex-1 min-h-0"
+            compact={sidebarOpen}
+            className={sidebarOpen ? 'md:flex-1 md:min-h-0' : 'flex-1 min-h-0'}
             overlay={
               <>
                 <AnnotationOverlay key={focusedCommentId ?? 'none'} />
@@ -626,17 +627,26 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       </div>
 
       {/* ─── Main content: viewer + sidebar ────────────────────────────── */}
+      {/* `review-workspace` / `review-viewer` are the hooks the phone-landscape
+          orientation rule in globals.css targets to turn this stack into two
+          columns. Width alone cannot decide it — a phone in landscape is
+          physically wide but still needs the compact review surface. */}
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
         <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} />
       ) : (
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+      <div className="review-workspace flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         {/* Left: viewer column */}
         <div
           className={cn(
-            'flex min-w-0 flex-col overflow-hidden bg-bg-primary',
-            sidebarOpen
-              ? 'h-[min(56svh,28rem,calc(100svh-15rem))] shrink-0'
-              : 'min-h-0 flex-1',
+            'review-viewer flex min-w-0 flex-col overflow-hidden bg-bg-primary',
+            !sidebarOpen
+              ? 'min-h-0 flex-1'
+              : asset.asset_type === 'video'
+                // Video sizes itself to a natural 16:9 box in portrait.
+                ? 'shrink-0'
+                // Image/audio viewers fill their column, so they still need a
+                // bounded height to share the screen with the comments pane.
+                : 'h-[min(56svh,28rem,calc(100svh-15rem))] shrink-0',
             'md:h-auto md:max-h-none md:flex-1',
           )}
         >

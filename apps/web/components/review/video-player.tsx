@@ -36,6 +36,13 @@ interface VideoPlayerProps {
   className?: string;
   /** Pre-fetched stream URL (for share mode — skips authenticated API call) */
   initialStreamUrl?: string | null;
+  /**
+   * Phone portrait: size the video area to its natural 16:9 box instead of
+   * filling the column, so there is no letterbox padding above and below.
+   * Ignored in fullscreen and on md+, and overridden in phone landscape by
+   * the `.review-workspace` orientation rule in globals.css.
+   */
+  compact?: boolean;
 }
 
 // ─── Video frame constraint ──────────────────────────────────────────────────
@@ -129,6 +136,7 @@ export function VideoPlayer({
   overlay,
   className,
   initialStreamUrl,
+  compact = false,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
@@ -316,14 +324,22 @@ export function VideoPlayer({
     <div
       ref={containerRef}
       className={cn(
-        "flex flex-col h-full w-full",
+        "review-player flex flex-col w-full",
+        compact && !isFullscreen ? "h-auto md:h-full" : "h-full",
         isFullscreen && "fixed inset-0 z-50",
         className,
       )}
     >
-      {/* Video area — fills available space, object-contain preserves aspect ratio with letterbox */}
+      {/* Video area — object-contain preserves aspect ratio. Fills available
+          space by default; in compact (phone portrait) mode it takes its
+          natural 16:9 height so no letterbox bars are added. */}
       <div
-        className="flex-1 relative min-h-0 bg-black overflow-hidden cursor-pointer"
+        className={cn(
+          "review-video-area relative bg-black overflow-hidden cursor-pointer",
+          compact && !isFullscreen
+            ? "aspect-video w-full shrink-0 md:aspect-auto md:flex-1 md:min-h-0"
+            : "flex-1 min-h-0",
+        )}
         onClick={handleContainerClick}
       >
         <video
