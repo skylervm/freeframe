@@ -59,6 +59,13 @@ membership-only owner and automation paths.
 - Shipped 2026-09-11 in PR #8; all four live projects linked.
 - Known: the web app has no `typecheck` script; run `./node_modules/.bin/tsc --noEmit -p .` inside `apps/web`. ~27 API tests need a local Postgres and fail without one.
 
+### Mobile review follow-up — implemented, pending device verification
+
+- Shipped mobile navigation, More menus, fullscreen fallback, project-toolbar compaction, and a composer-visible review layout through PR #17 (`9278d92`).
+- Orientation redesign implemented: a `@media (max-width: 767px) and (orientation: landscape)` rule scoped to `review-workspace` / `review-viewer` / `review-player` / `review-video-area` / `#review-comments` turns the phone stack into two columns; portrait video uses a natural 16:9 box (`compact` on `VideoPlayer`) instead of a viewport-height container; the progress track is inset inside a tall pointer target with clamped time mapping.
+- Image and audio viewers still fill their column, so they keep the bounded portrait height; only video switches to natural sizing.
+- Handoff verification still open: authenticated iPhone portrait and landscape, including initial and final scrub positions, composer visibility, More menu actions, Comments/Fields scrolling, fullscreen, and no horizontal page scroll.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)

@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import ReviewPage from '../page'
 
@@ -44,7 +47,14 @@ vi.mock('@/components/review/review-provider', () => ({
     refetchVersions: vi.fn(),
   }),
 }))
-vi.mock('@/components/review/video-player', () => ({ VideoPlayer: () => <div data-testid="video-player" /> }))
+vi.mock('@/components/review/video-player', () => ({
+  // Props are captured, not discarded: `compact` is load-bearing. Without it
+  // the player falls back to `h-full` inside an auto-height parent and the
+  // video area collapses to 0px in phone portrait.
+  VideoPlayer: ({ compact }: { compact?: boolean }) => (
+    <div data-testid="video-player" data-compact={String(compact)} />
+  ),
+}))
 vi.mock('@/components/review/audio-player', () => ({ AudioPlayer: () => <div /> }))
 vi.mock('@/components/review/image-viewer', () => ({ ImageViewer: () => <div /> }))
 vi.mock('@/components/review/annotation-canvas', () => ({ AnnotationCanvas: () => <div /> }))
@@ -90,16 +100,65 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(screen.getByText('Version switcher').parentElement).toHaveClass('hidden', 'md:block')
   })
 
-  it('pins the phone viewer above a bounded comments pane with a persistent input', () => {
+  it('stacks a naturally sized phone-portrait video over a bounded comments pane with a persistent input', () => {
     render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
 
     const viewer = screen.getByTestId('video-player').parentElement
     const comments = document.getElementById('review-comments')
     const reviewSurface = screen.getByText(asset.name).closest('.absolute')
     expect(reviewSurface).toHaveClass('h-[100svh]', 'md:h-auto')
-    expect(viewer).toHaveClass('h-[min(56svh,28rem,calc(100svh-15rem))]', 'shrink-0')
+    // Video sizes itself to its own intrinsic aspect box, so the column must not
+    // carry a viewport-height box that would letterbox it in portrait.
+    expect(screen.getByTestId('video-player')).toHaveAttribute('data-compact', 'true')
+    expect(viewer).toHaveClass('review-viewer', 'shrink-0')
+    expect(viewer?.className).not.toContain('56svh')
+    expect(viewer?.parentElement).toHaveClass('review-workspace', 'flex-col', 'md:flex-row')
     expect(comments).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden')
     expect(comments?.parentElement).toHaveClass('overflow-hidden')
     expect(screen.getByTestId('comment-input')).toBeInTheDocument()
+  })
+
+  it('lets the video fill the column again once the comments pane is closed', async () => {
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+
+    await user.click(screen.getByRole('button', { name: 'Hide comments' }))
+
+    // With no comments pane to share the screen with there is nothing to be
+    // compact for, so the player goes back to filling the column.
+    expect(screen.getByTestId('video-player')).toHaveAttribute('data-compact', 'false')
+    expect(screen.getByTestId('video-player').parentElement).toHaveClass('flex-1', 'min-h-0')
+    expect(document.getElementById('review-comments')).toBeNull()
+  })
+
+  it('turns the review surface into two columns in phone landscape', () => {
+    // jsdom cannot evaluate media queries, so pin the CSS contract the layout
+    // depends on: the orientation rule, scoped to the review-only hooks.
+    const css = readFileSync(
+      path.resolve(__dirname, '../../../../../../globals.css'),
+      'utf8',
+    )
+    const start = css.indexOf('@media (max-width: 767px) and (orientation: landscape)')
+    // `slice(-1)` on a miss returns the last character, so guard on the index
+    // itself rather than on the length of what came back.
+    expect(start).toBeGreaterThan(-1)
+    // Scope to this at-rule's own body. Slicing to EOF only works while the
+    // block happens to be last in the file.
+    const end = css.indexOf('\n}', css.indexOf('#review-comments {', start))
+    expect(end).toBeGreaterThan(start)
+    const block = css.slice(start, end)
+
+    // Assert the declarations, not just the selectors: emptying every rule body
+    // would leave the selectors in place and the layout stacked.
+    expect(block).toContain('.review-workspace {')
+    expect(block).toMatch(/\.review-workspace \{[^}]*flex-direction:\s*row/)
+    expect(block).toMatch(/\.review-viewer \{[^}]*flex:\s*1 1 0%/)
+    expect(block).toMatch(/\.review-viewer \{[^}]*height:\s*auto/)
+    expect(block).toMatch(/\.review-player \{[^}]*flex:\s*1 1 0%/)
+    expect(block).toMatch(/\.review-video-area \{[^}]*aspect-ratio:\s*auto/)
+    // The portrait cap resolves to ~150px in landscape; it must be lifted.
+    expect(block).toMatch(/\.review-video-area \{[^}]*max-height:\s*none/)
+    expect(block).toMatch(/#review-comments \{[^}]*width:\s*min\(45%, 20rem\)/)
+    expect(block).toMatch(/#review-comments \{[^}]*border-left-width:\s*1px/)
   })
 })
