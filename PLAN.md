@@ -62,9 +62,11 @@ membership-only owner and automation paths.
 ### Mobile review follow-up — implemented, pending device verification
 
 - Shipped mobile navigation, More menus, fullscreen fallback, project-toolbar compaction, and a composer-visible review layout through PR #17 (`9278d92`).
-- Orientation redesign implemented: a `@media (max-width: 767px) and (orientation: landscape)` rule scoped to `review-workspace` / `review-viewer` / `review-player` / `review-video-area` / `#review-comments` turns the phone stack into two columns; portrait video uses a natural 16:9 box (`compact` on `VideoPlayer`) instead of a viewport-height container; the progress track is inset inside a tall pointer target with clamped time mapping.
+- Orientation redesign implemented: a `@media (max-width: 767px) and (orientation: landscape)` rule scoped to `review-workspace` / `review-viewer` / `review-player` / `review-video-area` / `#review-comments` turns the phone stack into two columns; portrait video uses a box matching the source's own aspect ratio (`compact` on `VideoPlayer`), capped at `min(56svh,28rem,calc(100svh-15rem))` so a tall clip cannot crowd out the comments pane, instead of a viewport-height container; the progress track is inset inside a tall pointer target with clamped time mapping.
 - Image and audio viewers still fill their column, so they keep the bounded portrait height; only video switches to natural sizing.
 - Handoff verification still open: authenticated iPhone portrait and landscape, including initial and final scrub positions, composer visibility, More menu actions, Comments/Fields scrolling, fullscreen, and no horizontal page scroll.
+- Also unverified on a device: a 9:16 or square clip in portrait (pillarboxed inside the cap, composer still reachable), the box resizing from the 16:9 fallback when metadata lands, an audio asset's scrubber inset, and landscape transport height with the taller hit area.
+- Not covered by this work: share-link reviewers (`folder-share-viewer.tsx`) still get the old fixed-height container on a phone.
 
 ## Active tracker
 
