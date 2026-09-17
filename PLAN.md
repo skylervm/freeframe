@@ -59,6 +59,12 @@ membership-only owner and automation paths.
 - Shipped 2026-09-11 in PR #8; all four live projects linked.
 - Known: the web app has no `typecheck` script; run `./node_modules/.bin/tsc --noEmit -p .` inside `apps/web`. ~27 API tests need a local Postgres and fail without one.
 
+### Mobile review follow-up — in progress
+
+- Shipped mobile navigation, More menus, fullscreen fallback, project-toolbar compaction, and a composer-visible review layout through PR #17 (`9278d92`).
+- Remaining: redesign the review surface by orientation. Phone landscape must place media and Comments/Fields in two columns. Portrait must use a compact natural 16:9 media frame plus transport instead of a tall letterboxed player. The scrub track must be inset from the screen edge and have a larger touch target.
+- Handoff verification: authenticated iPhone portrait and landscape, including initial-timeline scrubbing, composer visibility, More menu actions, and fullscreen.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
