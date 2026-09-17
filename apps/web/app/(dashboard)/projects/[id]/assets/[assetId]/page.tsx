@@ -372,7 +372,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden">
       {/* ─── Top bar (Frame.io style) ──────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
+      <div className="flex h-12 min-w-0 items-center justify-between border-b border-border bg-bg-secondary px-3 shrink-0">
         {/* Left: back + breadcrumb */}
         <div className="flex items-center gap-1 min-w-0 flex-1">
           <button
@@ -393,10 +393,32 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           </Link>
 
           {/* Asset name only */}
-          <span className="text-[13px] text-text-primary font-medium truncate">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
             {asset.name}
           </span>
         </div>
+
+        {/* Compact asset navigation keeps review traversal available on phones. */}
+        {totalAssets > 1 && (
+          <div className="flex shrink-0 items-center gap-0.5 md:hidden">
+            <button
+              onClick={() => prevAsset && navigateAsset(prevAsset.id)}
+              disabled={!prevAsset}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Previous asset"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => nextAsset && navigateAsset(nextAsset.id)}
+              disabled={!nextAsset}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Next asset"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         {/* Center: asset navigation */}
         {totalAssets > 1 && (
@@ -424,7 +446,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         )}
 
         {/* Right: version, share, sidebar toggle */}
-        <div className="flex items-center gap-2 shrink-0 flex-1 justify-end">
+        <div className="flex shrink-0 items-center gap-1 md:flex-1 md:justify-end md:gap-2">
           {/* Hidden file input for new version upload */}
           <input
             ref={versionFileInputRef}
