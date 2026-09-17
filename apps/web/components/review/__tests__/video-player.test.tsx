@@ -92,15 +92,46 @@ describe('VideoPlayer compact box', () => {
     render(<VideoPlayer assetId="asset-1" compact />)
     reportSize(1080, 1920, 'loadedmetadata')
 
-    expect(area()).toHaveClass('aspect-[var(--review-aspect)]', 'md:aspect-auto')
+    expect(area()).toHaveClass('aspect-[var(--review-aspect,1.7778)]', 'md:aspect-auto')
     expect(area().style.getPropertyValue('--review-aspect')).toBe(String(1080 / 1920))
   })
 
-  it('sizes the box to a widescreen clip', () => {
+  it('sizes the box to an ultrawide clip', () => {
     render(<VideoPlayer assetId="asset-1" compact />)
-    reportSize(1920, 1080, 'loadedmetadata')
+    // Deliberately not 1920x1080: that equals the 16:9 fallback, so the
+    // assertion could not tell a real metadata read from no read at all.
+    reportSize(2560, 1080, 'loadedmetadata')
 
-    expect(area().style.getPropertyValue('--review-aspect')).toBe(String(1920 / 1080))
+    expect(area().style.getPropertyValue('--review-aspect')).toBe(String(2560 / 1080))
+  })
+
+  it('caps the box so a tall clip cannot crowd out the comments pane', () => {
+    render(<VideoPlayer assetId="asset-1" compact />)
+    reportSize(1080, 1920, 'loadedmetadata')
+
+    // Without this the 9:16 box computes to ~693px on a 390px-wide phone and
+    // squeezes the comments pane, which `aspect-video` used to prevent.
+    expect(area()).toHaveClass('max-h-[min(56svh,28rem,calc(100svh-15rem))]', 'md:max-h-none')
+  })
+
+  it('names a fallback ratio in the class, so an unset property cannot collapse the box', () => {
+    render(<VideoPlayer assetId="asset-1" compact />)
+
+    expect(area()).toHaveClass('aspect-[var(--review-aspect,1.7778)]')
+  })
+
+  it('drops a stale ratio when the source is torn down for a version switch', () => {
+    render(<VideoPlayer assetId="asset-1" compact />)
+    reportSize(1080, 1920, 'loadedmetadata')
+    expect(area().style.getPropertyValue('--review-aspect')).toBe(String(1080 / 1920))
+
+    const video = document.querySelector('video') as HTMLVideoElement
+    act(() => {
+      video.dispatchEvent(new Event('emptied'))
+    })
+
+    // Back to the fallback rather than the previous version's shape.
+    expect(area().style.getPropertyValue('--review-aspect')).toBe(String(16 / 9))
   })
 
   it('falls back to 16:9 until metadata arrives, so the box does not jump', () => {

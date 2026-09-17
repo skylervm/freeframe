@@ -181,6 +181,9 @@
     aspect-ratio: auto;
     flex: 1 1 0%;
     min-height: 0;
+    /* The portrait cap resolves to ~150px in landscape, which would collapse
+       the media column. Landscape sizes from the row instead. */
+    max-height: none;
   }
 
   /* Right column: Comments / Fields beside the media, not below it */

@@ -142,7 +142,11 @@ describe('ReviewScreenInner mobile layout', () => {
     // `slice(-1)` on a miss returns the last character, so guard on the index
     // itself rather than on the length of what came back.
     expect(start).toBeGreaterThan(-1)
-    const block = css.slice(start)
+    // Scope to this at-rule's own body. Slicing to EOF only works while the
+    // block happens to be last in the file.
+    const end = css.indexOf('\n}', css.indexOf('#review-comments {', start))
+    expect(end).toBeGreaterThan(start)
+    const block = css.slice(start, end)
 
     // Assert the declarations, not just the selectors: emptying every rule body
     // would leave the selectors in place and the layout stacked.
@@ -152,6 +156,8 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(block).toMatch(/\.review-viewer \{[^}]*height:\s*auto/)
     expect(block).toMatch(/\.review-player \{[^}]*flex:\s*1 1 0%/)
     expect(block).toMatch(/\.review-video-area \{[^}]*aspect-ratio:\s*auto/)
+    // The portrait cap resolves to ~150px in landscape; it must be lifted.
+    expect(block).toMatch(/\.review-video-area \{[^}]*max-height:\s*none/)
     expect(block).toMatch(/#review-comments \{[^}]*width:\s*min\(45%, 20rem\)/)
     expect(block).toMatch(/#review-comments \{[^}]*border-left-width:\s*1px/)
   })

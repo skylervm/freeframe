@@ -37,8 +37,9 @@ interface VideoPlayerProps {
   /** Pre-fetched stream URL (for share mode — skips authenticated API call) */
   initialStreamUrl?: string | null;
   /**
-   * Phone portrait: size the video area to its natural 16:9 box instead of
-   * filling the column, so there is no letterbox padding above and below.
+   * Phone portrait: size the video area to the source's own aspect ratio
+   * instead of filling the column, so there is no letterbox padding above and
+   * below. Capped so a tall clip cannot crowd out the comments pane.
    * Ignored in fullscreen and on md+, and overridden in phone landscape by
    * the `.review-workspace` orientation rule in globals.css.
    */
@@ -257,14 +258,23 @@ export function VideoPlayer({
         setIntrinsicRatio(videoWidth / videoHeight);
       }
     };
+    // A new source must not keep the previous version's shape. `videoWidth`
+    // holds its old value until fresh metadata arrives, so clear the state and
+    // only re-read synchronously when this element already has metadata.
+    const clearRatio = () => setIntrinsicRatio(null);
 
-    readRatio();
+    clearRatio();
+    if (video.readyState >= 1 /* HAVE_METADATA */) readRatio();
+
     video.addEventListener("loadedmetadata", readRatio);
     // HLS quality switches fire `resize` without a fresh `loadedmetadata`.
     video.addEventListener("resize", readRatio);
+    // Source teardown, e.g. switching asset versions.
+    video.addEventListener("emptied", clearRatio);
     return () => {
       video.removeEventListener("loadedmetadata", readRatio);
       video.removeEventListener("resize", readRatio);
+      video.removeEventListener("emptied", clearRatio);
     };
   }, [videoRef, streamUrl]);
 
@@ -357,13 +367,15 @@ export function VideoPlayer({
       )}
     >
       {/* Video area — object-contain preserves aspect ratio. Fills available
-          space by default; in compact (phone portrait) mode it takes its
-          natural 16:9 height so no letterbox bars are added. */}
+          space by default; in compact (phone portrait) mode it takes the
+          source's own aspect ratio so no letterbox bars are added, bounded by
+          the same cap the image/audio column uses so a tall clip still leaves
+          room for the comments pane. */}
       <div
         className={cn(
           "review-video-area relative bg-black overflow-hidden cursor-pointer",
           compact && !isFullscreen
-            ? "aspect-[var(--review-aspect)] w-full shrink-0 md:aspect-auto md:flex-1 md:min-h-0"
+            ? "aspect-[var(--review-aspect,1.7778)] max-h-[min(56svh,28rem,calc(100svh-15rem))] w-full shrink-0 md:aspect-auto md:max-h-none md:flex-1 md:min-h-0"
             : "flex-1 min-h-0",
         )}
         style={
