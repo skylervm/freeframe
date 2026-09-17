@@ -120,7 +120,7 @@ function SelectRow({
 
 // ─── Main popover ───────────────────────────────────────────────────────────
 
-export function AppearancePopover() {
+export function AppearancePopover({ compact = false }: { compact?: boolean }) {
   const {
     layout, setLayout,
     cardSize, setCardSize,
@@ -136,9 +136,12 @@ export function AppearancePopover() {
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors">
+        <button
+          aria-label={compact ? 'Appearance' : undefined}
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+        >
           <SlidersHorizontal className="h-4 w-4" />
-          Appearance
+          {!compact && 'Appearance'}
         </button>
       </Popover.Trigger>
 
