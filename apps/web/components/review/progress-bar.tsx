@@ -427,10 +427,12 @@ export function ProgressBar({
             style={{ left: `${playPercent}%`, transform: 'translateX(-50%) translateY(-50%)' }}
           />
 
-          {/* Frame preview + time tooltip — anchored to the visual track */}
+          {/* Frame preview + time tooltip — anchored to the visual track.
+              -top-3 keeps it exactly where it sat when it was a child of the
+              py-1 wrapper, one padding step further out. */}
           {hoverTime !== null && (
             <div
-              className="absolute -top-2 z-30 pointer-events-none"
+              className="absolute -top-3 z-30 pointer-events-none"
               style={{ left: hoverX, transform: 'translateX(-50%) translateY(-100%)' }}
             >
               {/* Frame preview */}
