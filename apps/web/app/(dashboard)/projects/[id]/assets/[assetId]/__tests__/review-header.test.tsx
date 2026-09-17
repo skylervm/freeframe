@@ -28,7 +28,7 @@ vi.mock('swr', () => ({
     data: key.endsWith('/assets')
       ? [{ ...asset, id: 'asset-1', name: 'Previous' }, asset, { ...asset, id: 'asset-3', name: 'Next' }]
       : key.endsWith('/members')
-        ? []
+        ? [{ user_id: 'user-1', role: 'editor' }]
         : key.endsWith('/folder-tree')
           ? []
           : { id: 'project-1', name: 'Project' },
@@ -44,13 +44,13 @@ vi.mock('@/components/review/review-provider', () => ({
     refetchVersions: vi.fn(),
   }),
 }))
-vi.mock('@/components/review/video-player', () => ({ VideoPlayer: () => <div /> }))
+vi.mock('@/components/review/video-player', () => ({ VideoPlayer: () => <div data-testid="video-player" /> }))
 vi.mock('@/components/review/audio-player', () => ({ AudioPlayer: () => <div /> }))
 vi.mock('@/components/review/image-viewer', () => ({ ImageViewer: () => <div /> }))
 vi.mock('@/components/review/annotation-canvas', () => ({ AnnotationCanvas: () => <div /> }))
 vi.mock('@/components/review/annotation-overlay', () => ({ AnnotationOverlay: () => <div /> }))
 vi.mock('@/components/review/comment-panel', () => ({ CommentPanel: () => <div /> }))
-vi.mock('@/components/review/comment-input', () => ({ CommentInput: () => <div /> }))
+vi.mock('@/components/review/comment-input', () => ({ CommentInput: () => <div data-testid="comment-input" /> }))
 vi.mock('@/components/review/version-switcher', () => ({ VersionSwitcher: () => <span>Version switcher</span> }))
 vi.mock('@/components/review/share-dialog', () => ({ ShareDialog: () => <span>Share dialog</span> }))
 vi.mock('@/components/review/compare/compare-overlay', () => ({ CompareOverlay: () => <div /> }))
@@ -75,8 +75,8 @@ vi.mock('@/components/layout/mobile-navigation-context', () => ({ useMobileNavig
 vi.mock('@/lib/compare-time', () => ({ canCompare: () => true }))
 vi.mock('@/hooks/use-page-title', () => ({ usePageTitle: vi.fn() }))
 
-describe('ReviewScreenInner header', () => {
-  it('keeps every essential review action compact below md while desktop actions stay md-only', () => {
+describe('ReviewScreenInner mobile layout', () => {
+  it('keeps essential review actions compact below md while desktop actions stay md-only', () => {
     render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
 
     expect(screen.getByText(asset.name)).toHaveClass('min-w-0', 'flex-1', 'truncate')
@@ -88,5 +88,18 @@ describe('ReviewScreenInner header', () => {
     expect(screen.getByRole('button', { name: 'Compare' })).toHaveClass('hidden', 'md:inline-flex')
     expect(screen.getByRole('button', { name: 'New Version' })).toHaveClass('hidden', 'md:inline-flex')
     expect(screen.getByText('Version switcher').parentElement).toHaveClass('hidden', 'md:block')
+  })
+
+  it('pins the phone viewer above a bounded comments pane with a persistent input', () => {
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+
+    const viewer = screen.getByTestId('video-player').parentElement
+    const comments = document.getElementById('review-comments')
+    const reviewSurface = screen.getByText(asset.name).closest('.absolute')
+    expect(reviewSurface).toHaveClass('h-[100svh]', 'md:h-auto')
+    expect(viewer).toHaveClass('h-[min(56svh,28rem,calc(100svh-15rem))]', 'shrink-0')
+    expect(comments).toHaveClass('min-h-0', 'flex-1', 'overflow-hidden')
+    expect(comments?.parentElement).toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('comment-input')).toBeInTheDocument()
   })
 })
