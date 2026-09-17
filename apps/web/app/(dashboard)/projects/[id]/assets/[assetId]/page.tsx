@@ -370,7 +370,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <div className="absolute inset-x-0 top-0 flex h-[100svh] flex-col overflow-hidden md:inset-0 md:h-auto">
       {/* ─── Top bar (Frame.io style) ──────────────────────────────────── */}
       <div className="flex h-12 min-w-0 items-center justify-between border-b border-border bg-bg-secondary px-3 shrink-0">
         {/* Left: back + breadcrumb */}
@@ -629,16 +629,24 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
         <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} />
       ) : (
-      <div className="flex flex-1 flex-col overflow-y-auto min-h-0 md:flex-row md:overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         {/* Left: viewer column */}
-        <div className="flex flex-none flex-col min-w-0 h-[56svh] min-h-[16rem] max-h-[28rem] bg-bg-primary overflow-hidden md:flex-1 md:h-auto md:max-h-none">
+        <div
+          className={cn(
+            'flex min-w-0 flex-col overflow-hidden bg-bg-primary',
+            sidebarOpen
+              ? 'h-[min(56svh,28rem,calc(100svh-15rem))] shrink-0'
+              : 'min-h-0 flex-1',
+            'md:h-auto md:max-h-none md:flex-1',
+          )}
+        >
           {/* Media viewer */}
           {renderMediaViewer()}
         </div>
 
         {/* Right: comments sidebar */}
         {sidebarOpen && (
-          <div id="review-comments" className="w-full min-h-[24rem] flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:border-t-0 md:border-l animate-in slide-in-from-right-2 duration-150">
+          <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0 animate-in slide-in-from-right-2 duration-150">
             {/* Tabs (Frame.io pill style) */}
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
