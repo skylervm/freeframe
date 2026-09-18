@@ -68,13 +68,12 @@ describe('redactSentryEvent', () => {
     expect(result.request?.headers?.['content-type']).toBe('application/json')
   })
 
-  it('redacts a share token carried in non-named headers (referer, next-url, next-router-state-tree)', () => {
+  it('redacts a share token carried in non-named headers (referer, next-url)', () => {
     const event = {
       request: {
         headers: {
           referer: 'https://review.frombelow.studio/share/fake-share-token',
           'next-url': '/share/fake-share-token',
-          'next-router-state-tree': '["",{"children":["share",{"children":["/share/fake-share-token",{}]}]}]',
         },
       },
     }
@@ -83,9 +82,18 @@ describe('redactSentryEvent', () => {
 
     expect(result.request?.headers?.referer).toBe('https://review.frombelow.studio/share/REDACTED')
     expect(result.request?.headers?.['next-url']).toBe('/share/REDACTED')
-    expect(result.request?.headers?.['next-router-state-tree']).toBe(
-      '["",{"children":["share",{"children":["/share/REDACTED",{}]}]}]',
-    )
+  })
+
+  it('blanks next-router-state-tree entirely (it encodes a dynamic segment as ["token","<value>","d"], not a path)', () => {
+    // A real Next.js router state tree for /share/[token], URL-encoded as the
+    // header value actually appears on the wire.
+    const tree =
+      '%5B%22%22%2C%7B%22children%22%3A%5B%22share%22%2C%7B%22children%22%3A%5B%5B%22token%22%2C%22fake-share-token%22%2C%22d%22%5D%2C%7B%22children%22%3A%5B%22__PAGE__%22%2C%7B%7D%5D%7D%5D%7D%5D%7D%5D'
+
+    const event = { request: { headers: { 'next-router-state-tree': tree } } }
+    const result = redactSentryEvent(event)
+
+    expect(result.request?.headers?.['next-router-state-tree']).toBe('REDACTED')
   })
 
   it('deletes request.cookies and request.data entirely', () => {

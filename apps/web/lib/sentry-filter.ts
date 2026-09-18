@@ -5,7 +5,11 @@
 // place that redaction lives, called from beforeSend/beforeBreadcrumb in
 // every Sentry.init (client, server, edge).
 
-const SENSITIVE_HEADER_NAMES = /^(authorization|cookie|set-cookie|x-api-key)$/i
+// next-router-state-tree encodes a dynamic route segment as
+// ["token","<value>","d"], URL-encoded — the value never appears in a
+// /share/ or /invite/ path shape, so the path-token pattern below can't
+// catch it. Blank the whole header rather than trying to parse it.
+const SENSITIVE_HEADER_NAMES = /^(authorization|cookie|set-cookie|x-api-key|next-router-state-tree)$/i
 const SENSITIVE_QUERY_PARAM_NAMES = /^(token|api_key|apikey|key|access_token|refresh_token)$/i
 // Routes that embed a secret directly in the path rather than a header/query.
 // Unanchored so it also matches nested paths like /api/auth/invite/<token>.
@@ -73,10 +77,11 @@ type SentryEventForRedaction = {
 
 /**
  * Redacts every header value: the named highly-sensitive ones (authorization,
- * cookie, set-cookie, x-api-key) are blanked entirely; every other string
- * value is run through `redactUrlCredentials` because Next.js carries the
- * current path (and any share/invite token in it) in ordinary-looking
- * headers too — `referer`, `next-url`, `next-router-state-tree`.
+ * cookie, set-cookie, x-api-key, next-router-state-tree) are blanked
+ * entirely; every other string value is still run through
+ * `redactUrlCredentials` because Next.js carries the current path (and any
+ * share/invite token in it) in ordinary-looking headers too — `referer`,
+ * `next-url`.
  */
 function redactHeaders(headers: Record<string, unknown> | undefined): void {
   if (!headers) return
