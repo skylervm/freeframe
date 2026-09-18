@@ -60,10 +60,14 @@ export function MobileCommentMenuItems({
   comments,
   assetType,
   onSearch,
+  showDownload = true,
 }: {
   view: CommentView;
-  comments: CommentWithReplies[];
+  /** Only what the Show counts need, so any comment shape fits. */
+  comments: Pick<CommentWithReplies, "parent_id" | "visibility">[];
   assetType: string;
+  /** Off where export can't work, e.g. a share-link guest with no account. */
+  showDownload?: boolean;
   /** Lets the host menu keep focus on the search field when it closes. */
   onSearch?: () => void;
 }) {
@@ -207,32 +211,34 @@ export function MobileCommentMenuItems({
         Search comments
       </DropdownMenu.Item>
 
-      <DropdownMenu.Sub>
-        <DropdownMenu.SubTrigger className={SUB_TRIGGER_CLASS}>
-          <span className="truncate">Download comments</span>
-          <ChevronRight className="h-4 w-4 shrink-0" />
-        </DropdownMenu.SubTrigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.SubContent className={SUB_CONTENT_CLASS}>
-            {assetType === "video" &&
-              VIDEO_EXPORTS.map((option) => (
-                <DropdownMenu.Item
-                  key={option.format}
-                  onSelect={() => void view.exportAs(option.format)}
-                  className={ITEM_CLASS}
-                >
-                  {option.label}
-                </DropdownMenu.Item>
-              ))}
-            <DropdownMenu.Item
-              onSelect={() => void view.exportAs("csv")}
-              className={ITEM_CLASS}
-            >
-              CSV
-            </DropdownMenu.Item>
-          </DropdownMenu.SubContent>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Sub>
+      {showDownload && (
+        <DropdownMenu.Sub>
+          <DropdownMenu.SubTrigger className={SUB_TRIGGER_CLASS}>
+            <span className="truncate">Download comments</span>
+            <ChevronRight className="h-4 w-4 shrink-0" />
+          </DropdownMenu.SubTrigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.SubContent className={SUB_CONTENT_CLASS}>
+              {assetType === "video" &&
+                VIDEO_EXPORTS.map((option) => (
+                  <DropdownMenu.Item
+                    key={option.format}
+                    onSelect={() => void view.exportAs(option.format)}
+                    className={ITEM_CLASS}
+                  >
+                    {option.label}
+                  </DropdownMenu.Item>
+                ))}
+              <DropdownMenu.Item
+                onSelect={() => void view.exportAs("csv")}
+                className={ITEM_CLASS}
+              >
+                CSV
+              </DropdownMenu.Item>
+            </DropdownMenu.SubContent>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Sub>
+      )}
     </>
   );
 }
