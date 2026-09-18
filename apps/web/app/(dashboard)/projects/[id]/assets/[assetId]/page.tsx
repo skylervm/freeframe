@@ -73,6 +73,27 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const commentView = useCommentView()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileShareOpen, setMobileShareOpen] = useState(false)
+  const resetCommentView = commentView.reset
+  const searchRequestedRef = useRef(false)
+
+  // The view used to live inside CommentPanel and reset whenever the panel
+  // unmounted (pane closed, or Fields tab). Keep that now the page owns it.
+  useEffect(() => {
+    if (!sidebarOpen || activeTab !== 'comments') resetCommentView()
+  }, [sidebarOpen, activeTab, resetCommentView])
+
+  // Phones have no tab row, so they must never be left on Fields — e.g. a
+  // tablet rotated below md after Fields was picked at desktop width.
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const phone = window.matchMedia('(max-width: 767px)')
+    const showCommentsOnPhone = () => {
+      if (phone.matches) setActiveTab('comments')
+    }
+    showCommentsOnPhone()
+    phone.addEventListener('change', showCommentsOnPhone)
+    return () => phone.removeEventListener('change', showCommentsOnPhone)
+  }, [])
   const deepLinkApplied = useRef(false)
 
   // Fetch folder tree to build the folder path for the breadcrumb
@@ -509,9 +530,11 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                 align="end"
                 sideOffset={6}
                 // "Search comments" opens and focuses the search field; don't
-                // hand focus back to the More button on top of it.
+                // hand focus back to the More button on top of it. Keyed on the
+                // pick itself, so every other close still returns focus.
                 onCloseAutoFocus={(event) => {
-                  if (commentView.searchOpen) event.preventDefault()
+                  if (searchRequestedRef.current) event.preventDefault()
+                  searchRequestedRef.current = false
                 }}
                 className="z-[100] min-w-[180px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl md:hidden"
               >
@@ -620,6 +643,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     view={commentView}
                     comments={comments as any}
                     assetType={asset.asset_type}
+                    onSearch={() => {
+                      searchRequestedRef.current = true
+                    }}
                   />
                 )}
               </DropdownMenu.Content>
@@ -730,15 +756,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
             {/* Content */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              {/* Phones always show comments: the tab that could switch away
-                  from them is hidden below md. */}
-              <div
-                data-testid="review-comments-content"
-                className={cn(
-                  'min-h-0 flex-1 flex-col',
-                  activeTab === 'comments' ? 'flex' : 'flex md:hidden',
-                )}
-              >
+              {activeTab === 'comments' ? (
+                <>
                   <CommentPanel
                     comments={comments as any}
                     currentUserId={user?.id}
@@ -760,12 +779,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                       annotationData={annotationData}
                     />
                   )}
-              </div>
-              {activeTab === 'fields' && (
-                <div
-                  data-testid="review-fields-content"
-                  className="hidden flex-1 overflow-y-auto p-4 space-y-4 md:block"
-                >
+                </>
+              ) : (
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Name</span>

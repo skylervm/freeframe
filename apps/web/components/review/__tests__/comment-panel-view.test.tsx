@@ -111,4 +111,23 @@ describe('CommentPanel with a shared view on phones', () => {
     expect(Object.values(view().filters).some(Boolean)).toBe(false)
     expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull()
   })
+
+  it('reset returns the view to its defaults', () => {
+    const view = renderWithSharedView()
+    act(() => {
+      view().setVisibility('internal')
+      view().setSortMode('newest')
+      view().toggleFilter('annotations')
+      view().setSearchOpen(true)
+      view().setSearchQuery('x')
+    })
+
+    act(() => view().reset())
+
+    expect(view().visibility).toBe('all')
+    expect(view().sortMode).toBe('timecode')
+    expect(Object.values(view().filters).some(Boolean)).toBe(false)
+    expect(view().searchOpen).toBe(false)
+    expect(view().searchQuery).toBe('')
+  })
 })

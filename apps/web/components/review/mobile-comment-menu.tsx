@@ -59,10 +59,13 @@ export function MobileCommentMenuItems({
   view,
   comments,
   assetType,
+  onSearch,
 }: {
   view: CommentView;
   comments: CommentWithReplies[];
   assetType: string;
+  /** Lets the host menu keep focus on the search field when it closes. */
+  onSearch?: () => void;
 }) {
   const topLevel = comments.filter((comment) => comment.parent_id === null);
   const counts: Record<CommentVisibility, number> = {
@@ -109,8 +112,13 @@ export function MobileCommentMenuItems({
                   className={CHOICE_CLASS}
                 >
                   {option.label}
-                  <span className="text-[12px] tabular-nums text-text-tertiary">
-                    {counts[option.id]}
+                  <span className="flex items-center gap-2">
+                    <span className="text-[12px] tabular-nums text-text-tertiary">
+                      {counts[option.id]}
+                    </span>
+                    <DropdownMenu.ItemIndicator>
+                      <Check className="h-4 w-4 text-accent" />
+                    </DropdownMenu.ItemIndicator>
                   </span>
                 </DropdownMenu.RadioItem>
               ))}
@@ -187,7 +195,10 @@ export function MobileCommentMenuItems({
       </DropdownMenu.Sub>
 
       <DropdownMenu.Item
-        onSelect={() => view.setSearchOpen(true)}
+        onSelect={() => {
+          onSearch?.();
+          view.setSearchOpen(true);
+        }}
         className={ITEM_CLASS}
       >
         <Search className="h-4 w-4" />

@@ -794,6 +794,14 @@ export function useCommentView(exportVersionId?: string) {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
   const clearFilters = React.useCallback(() => setFilters(EMPTY_FILTERS), []);
+  const reset = React.useCallback(() => {
+    setVisibility("all");
+    setSortMode("timecode");
+    setFilters(EMPTY_FILTERS);
+    setSearchOpen(false);
+    setSearchQuery("");
+    setFpsPromptFormat(null);
+  }, []);
 
   const exportAs = React.useCallback(
     async (format: ExportFormat, fps?: number) => {
@@ -832,6 +840,7 @@ export function useCommentView(exportVersionId?: string) {
     fpsPromptFormat,
     setFpsPromptFormat,
     exportAs,
+    reset,
   };
 }
 

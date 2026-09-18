@@ -23,6 +23,7 @@ function makeView(over: Partial<CommentView> = {}): CommentView {
     fpsPromptFormat: null,
     setFpsPromptFormat: vi.fn(),
     exportAs: vi.fn().mockResolvedValue(undefined),
+    reset: vi.fn(),
     ...over,
   }
 }
@@ -138,13 +139,34 @@ describe('MobileCommentMenuItems', () => {
     expect(view.clearFilters).toHaveBeenCalled()
   })
 
-  it('starts a search', () => {
+  it('starts a search and tells the host menu it was picked', () => {
     const view = makeView()
-    renderMenu(view)
+    const onSearch = vi.fn()
+    render(
+      <DropdownMenu.Root open>
+        <DropdownMenu.Content>
+          <MobileCommentMenuItems view={view} comments={comments} assetType="video" onSearch={onSearch} />
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>,
+    )
 
     click(screen.getByRole('menuitem', { name: 'Search comments' }))
 
     expect(view.setSearchOpen).toHaveBeenCalledWith(true)
+    expect(onSearch).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the current Show choice with a check, like Sort and Filter', () => {
+    renderMenu(makeView({ visibility: 'public' }))
+
+    click(screen.getByRole('menuitem', { name: 'Show: Public comments' }))
+
+    const checked = screen.getByRole('menuitemradio', { checked: true })
+    expect(checked).toHaveTextContent(/^Public comments/)
+    expect(checked.querySelector('svg')).not.toBeNull()
+    expect(
+      screen.getByRole('menuitemradio', { name: /^All comments/ }).querySelector('svg'),
+    ).toBeNull()
   })
 
   it('offers editor exports for video and CSV for everything', () => {

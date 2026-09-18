@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import ReviewPage from '../page'
@@ -10,7 +10,7 @@ const state = vi.hoisted(() => ({
   routerPush: vi.fn(),
   setCurrentVersion: vi.fn(),
   // Stands in for the page's shared comment view; identity is what's asserted.
-  commentView: { searchOpen: false },
+  commentView: { searchOpen: false, reset: vi.fn() },
 }))
 
 const asset = {
@@ -142,8 +142,7 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(document.getElementById('review-comments')).toBeNull()
   })
 
-  it('drops the Comments/Fields tabs and the comment toolbar on phones, keeping desktop as is', async () => {
-    const user = userEvent.setup()
+  it('drops the Comments/Fields tabs and the comment toolbar on phones, keeping desktop as is', () => {
     render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
 
     // The tab row renders for md+ only.
@@ -155,17 +154,47 @@ describe('ReviewScreenInner mobile layout', () => {
     const panel = screen.getByTestId('comment-panel')
     expect(panel).toHaveAttribute('data-compact-toolbar', 'true')
     expect(panel).toHaveAttribute('data-shared-view', 'true')
+  })
 
-    const commentsContent = screen.getByTestId('review-comments-content')
-    expect(commentsContent).toHaveClass('flex')
-    expect(commentsContent).not.toHaveClass('md:hidden')
-    expect(screen.queryByTestId('review-fields-content')).toBeNull()
+  it('resets the comment view whenever the old panel would have been thrown away', async () => {
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+    state.commentView.reset.mockClear()
 
-    // Switching to Fields on desktop must not strand a phone on a tab it can't
-    // leave: comments stay visible below md, Fields shows from md up only.
-    await user.click(fieldsTab)
-    expect(commentsContent).toHaveClass('flex', 'md:hidden')
-    expect(screen.getByTestId('review-fields-content')).toHaveClass('hidden', 'md:block')
+    // Desktop Fields tab: the panel unmounts, as before, and the view resets.
+    await user.click(screen.getByRole('button', { name: 'Fields' }))
+    expect(screen.queryByTestId('comment-panel')).toBeNull()
+    expect(state.commentView.reset).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', { name: 'Comments' }))
+    state.commentView.reset.mockClear()
+    await user.click(screen.getByRole('button', { name: 'Hide comments' }))
+    expect(state.commentView.reset).toHaveBeenCalledTimes(1)
+  })
+
+  it('never leaves a phone on the Fields tab it has no way to leave', async () => {
+    const listeners: Array<() => void> = []
+    const media = {
+      matches: false,
+      addEventListener: (_: string, listener: () => void) => listeners.push(listener),
+      removeEventListener: vi.fn(),
+    }
+    const original = window.matchMedia
+    window.matchMedia = vi.fn(() => media) as never
+    try {
+      const user = userEvent.setup()
+      render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+
+      // Fields picked at desktop width, then the screen drops below md.
+      await user.click(screen.getByRole('button', { name: 'Fields' }))
+      expect(screen.queryByTestId('comment-panel')).toBeNull()
+      media.matches = true
+      act(() => listeners.forEach((listener) => listener()))
+
+      expect(screen.getByTestId('comment-panel')).toBeInTheDocument()
+    } finally {
+      window.matchMedia = original
+    }
   })
 
   it('turns the review surface into two columns in phone landscape', () => {
