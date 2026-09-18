@@ -59,14 +59,14 @@ membership-only owner and automation paths.
 - Shipped 2026-09-11 in PR #8; all four live projects linked.
 - Known: the web app has no `typecheck` script; run `./node_modules/.bin/tsc --noEmit -p .` inside `apps/web`. ~27 API tests need a local Postgres and fail without one.
 
-### Mobile review follow-up — implemented, pending device verification
+### Mobile review follow-up — shipped
 
 - Shipped mobile navigation, More menus, fullscreen fallback, project-toolbar compaction, and a composer-visible review layout through PR #17 (`9278d92`).
-- Orientation redesign implemented: a `@media (max-width: 767px) and (orientation: landscape)` rule scoped to `review-workspace` / `review-viewer` / `review-player` / `review-video-area` / `#review-comments` turns the phone stack into two columns; portrait video uses a box matching the source's own aspect ratio (`compact` on `VideoPlayer`), capped at `min(56svh,28rem,calc(100svh-15rem))` so a tall clip cannot crowd out the comments pane, instead of a viewport-height container; the progress track is inset inside a tall pointer target with clamped time mapping.
-- Image and audio viewers still fill their column, so they keep the bounded portrait height; only video switches to natural sizing.
-- Handoff verification still open: authenticated iPhone portrait and landscape, including initial and final scrub positions, composer visibility, More menu actions, Comments/Fields scrolling, fullscreen, and no horizontal page scroll.
-- Also unverified on a device: a 9:16 or square clip in portrait (pillarboxed inside the cap, composer still reachable), the box resizing from the 16:9 fallback when metadata lands, an audio asset's scrubber inset, and landscape transport height with the taller hit area.
-- Not covered by this work: share-link reviewers (`folder-share-viewer.tsx`) still get the old fixed-height container on a phone.
+- #18 (`91d76b4`): a `@media (max-width: 767px) and (orientation: landscape)` rule scoped to `review-workspace` / `review-viewer` / `review-player` / `review-video-area` / `#review-comments` turns the phone stack into two columns; portrait video uses a box matching the source's own aspect ratio (`compact` on `VideoPlayer`), capped at `min(56svh,28rem,calc(100svh-15rem))`; the progress track is inset inside a tall pointer target with clamped time mapping. Image and audio viewers keep the bounded portrait height.
+- #20 (`c39e422`): below md the Comments/Fields tab row and the comment toolbar are gone; Fields moves to ⋯ More → Details and the comment controls to a Comments section of the same menu. Toolbar state lives in `useCommentView` (`components/review/comment-view.ts`); desktop is unchanged.
+- Device-verified on iPhone by Skyler on 2026-09-17 (#18 and #20, portrait and landscape).
+- #21 (`5204aae`): share-link review (`ShareReviewInner`, used by project and folder links) gets the same layout, with the comment controls under a phone-only ⋯. Device test pending (Plane FREEFRAME-7).
+- Open, tracked in Plane project "Free Frame": FREEFRAME-2 (Attachments/Unread/Mentions filters don't filter), FREEFRAME-4 (nits), FREEFRAME-5 (single-asset share page has no phone layout), FREEFRAME-6 (comment export fails silently).
 
 ## Active tracker
 
