@@ -196,7 +196,9 @@ export function MobileCommentMenuItems({
 
       <DropdownMenu.Item
         onSelect={() => {
-          onSearch?.();
+          // Already open: nothing re-focuses the field, so let the menu hand
+          // focus back to its trigger as usual.
+          if (!view.searchOpen) onSearch?.();
           view.setSearchOpen(true);
         }}
         className={ITEM_CLASS}

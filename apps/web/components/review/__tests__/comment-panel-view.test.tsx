@@ -131,3 +131,53 @@ describe('CommentPanel with a shared view on phones', () => {
     expect(view().searchQuery).toBe('')
   })
 })
+
+describe('useCommentView export after a reset', () => {
+  it('drops a frame-rate prompt from an export that fails after the view was reset', async () => {
+    const exportModule = await import('@/lib/export-comments')
+    let rejectExport: (error: unknown) => void = () => {}
+    const spy = vi
+      .spyOn(exportModule, 'exportComments')
+      .mockImplementation(() => new Promise((_, reject) => { rejectExport = reject }))
+    useReviewStore.setState({
+      currentAsset: { id: 'a1', asset_type: 'video' },
+      currentVersion: { id: 'v1' },
+    } as never)
+    try {
+      const view = renderWithSharedView()
+
+      let pending: Promise<void> = Promise.resolve()
+      act(() => { pending = view().exportAs('edl') })
+      // Pane closed (or Fields opened) while the request is in flight.
+      act(() => view().reset())
+      await act(async () => {
+        rejectExport(new exportModule.FpsRequiredError())
+        await pending
+      })
+
+      expect(view().fpsPromptFormat).toBeNull()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('still raises the frame-rate prompt when nothing reset the view', async () => {
+    const exportModule = await import('@/lib/export-comments')
+    const spy = vi
+      .spyOn(exportModule, 'exportComments')
+      .mockRejectedValue(new exportModule.FpsRequiredError())
+    useReviewStore.setState({
+      currentAsset: { id: 'a1', asset_type: 'video' },
+      currentVersion: { id: 'v1' },
+    } as never)
+    try {
+      const view = renderWithSharedView()
+
+      await act(async () => { await view().exportAs('edl') })
+
+      expect(view().fpsPromptFormat).toBe('edl')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})

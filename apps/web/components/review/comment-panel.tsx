@@ -789,12 +789,16 @@ export function useCommentView(exportVersionId?: string) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [fpsPromptFormat, setFpsPromptFormat] =
     React.useState<ExportFormat | null>(null);
+  // Bumped by reset(), so an export that fails after the view was reset
+  // cannot raise a frame-rate prompt the next time comments are shown.
+  const resetGenerationRef = React.useRef(0);
 
   const toggleFilter = React.useCallback((key: keyof FilterState) => {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
   const clearFilters = React.useCallback(() => setFilters(EMPTY_FILTERS), []);
   const reset = React.useCallback(() => {
+    resetGenerationRef.current += 1;
     setVisibility("all");
     setSortMode("timecode");
     setFilters(EMPTY_FILTERS);
@@ -807,6 +811,7 @@ export function useCommentView(exportVersionId?: string) {
     async (format: ExportFormat, fps?: number) => {
       const versionId = exportVersionId ?? currentVersion?.id;
       if (!currentAsset || !versionId) return;
+      const generation = resetGenerationRef.current;
       try {
         await exportComments({
           assetId: currentAsset.id,
@@ -816,7 +821,9 @@ export function useCommentView(exportVersionId?: string) {
         });
       } catch (err) {
         if (err instanceof FpsRequiredError) {
-          setFpsPromptFormat(format);
+          if (resetGenerationRef.current === generation) {
+            setFpsPromptFormat(format);
+          }
         } else {
           console.error(err);
         }

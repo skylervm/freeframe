@@ -86,13 +86,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   // tablet rotated below md after Fields was picked at desktop width.
   useEffect(() => {
     if (typeof window.matchMedia !== 'function') return
-    const phone = window.matchMedia('(max-width: 767px)')
+    // The exact complement of Tailwind's md, so no fractional width falls
+    // between "tab row hidden" and "guard active".
+    const desktop = window.matchMedia('(min-width: 768px)')
     const showCommentsOnPhone = () => {
-      if (phone.matches) setActiveTab('comments')
+      if (!desktop.matches) setActiveTab('comments')
     }
     showCommentsOnPhone()
-    phone.addEventListener('change', showCommentsOnPhone)
-    return () => phone.removeEventListener('change', showCommentsOnPhone)
+    desktop.addEventListener('change', showCommentsOnPhone)
+    return () => desktop.removeEventListener('change', showCommentsOnPhone)
   }, [])
   const deepLinkApplied = useRef(false)
 

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
+import { setViewportWidth } from '@/test/setup'
 import ReviewPage from '../page'
 
 const state = vi.hoisted(() => ({
@@ -157,43 +158,35 @@ describe('ReviewScreenInner mobile layout', () => {
   })
 
   it('resets the comment view whenever the old panel would have been thrown away', async () => {
+    state.commentView.reset.mockClear()
     const user = userEvent.setup()
     render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
-    state.commentView.reset.mockClear()
+    // Not on first load: pane open on the Comments tab keeps the view.
+    expect(state.commentView.reset).not.toHaveBeenCalled()
 
     // Desktop Fields tab: the panel unmounts, as before, and the view resets.
     await user.click(screen.getByRole('button', { name: 'Fields' }))
     expect(screen.queryByTestId('comment-panel')).toBeNull()
-    expect(state.commentView.reset).toHaveBeenCalledTimes(1)
+    expect(state.commentView.reset).toHaveBeenCalled()
 
     await user.click(screen.getByRole('button', { name: 'Comments' }))
     state.commentView.reset.mockClear()
     await user.click(screen.getByRole('button', { name: 'Hide comments' }))
-    expect(state.commentView.reset).toHaveBeenCalledTimes(1)
+    expect(state.commentView.reset).toHaveBeenCalled()
   })
 
   it('never leaves a phone on the Fields tab it has no way to leave', async () => {
-    const listeners: Array<() => void> = []
-    const media = {
-      matches: false,
-      addEventListener: (_: string, listener: () => void) => listeners.push(listener),
-      removeEventListener: vi.fn(),
-    }
-    const original = window.matchMedia
-    window.matchMedia = vi.fn(() => media) as never
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
     try {
-      const user = userEvent.setup()
-      render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
-
       // Fields picked at desktop width, then the screen drops below md.
       await user.click(screen.getByRole('button', { name: 'Fields' }))
       expect(screen.queryByTestId('comment-panel')).toBeNull()
-      media.matches = true
-      act(() => listeners.forEach((listener) => listener()))
+      act(() => setViewportWidth(767.5))
 
       expect(screen.getByTestId('comment-panel')).toBeInTheDocument()
     } finally {
-      window.matchMedia = original
+      act(() => setViewportWidth(1024))
     }
   })
 

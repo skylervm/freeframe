@@ -156,6 +156,23 @@ describe('MobileCommentMenuItems', () => {
     expect(onSearch).toHaveBeenCalledTimes(1)
   })
 
+  it('does not claim focus for search that is already open', () => {
+    const view = makeView({ searchOpen: true })
+    const onSearch = vi.fn()
+    render(
+      <DropdownMenu.Root open>
+        <DropdownMenu.Content>
+          <MobileCommentMenuItems view={view} comments={comments} assetType="video" onSearch={onSearch} />
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>,
+    )
+
+    click(screen.getByRole('menuitem', { name: 'Search comments' }))
+
+    // Nothing will re-focus the field, so the menu must return focus as usual.
+    expect(onSearch).not.toHaveBeenCalled()
+  })
+
   it('marks the current Show choice with a check, like Sort and Filter', () => {
     renderMenu(makeView({ visibility: 'public' }))
 
