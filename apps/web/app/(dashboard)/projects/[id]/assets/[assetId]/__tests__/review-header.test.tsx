@@ -1,14 +1,17 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
+import { setViewportWidth } from '@/test/setup'
 import ReviewPage from '../page'
 
 const state = vi.hoisted(() => ({
   routerPush: vi.fn(),
   setCurrentVersion: vi.fn(),
+  // Stands in for the page's shared comment view; identity is what's asserted.
+  commentView: { searchOpen: false, reset: vi.fn() },
 }))
 
 const asset = {
@@ -59,7 +62,16 @@ vi.mock('@/components/review/audio-player', () => ({ AudioPlayer: () => <div /> 
 vi.mock('@/components/review/image-viewer', () => ({ ImageViewer: () => <div /> }))
 vi.mock('@/components/review/annotation-canvas', () => ({ AnnotationCanvas: () => <div /> }))
 vi.mock('@/components/review/annotation-overlay', () => ({ AnnotationOverlay: () => <div /> }))
-vi.mock('@/components/review/comment-panel', () => ({ CommentPanel: () => <div /> }))
+vi.mock('@/components/review/comment-panel', () => ({
+  CommentPanel: ({ compactToolbar, view }: { compactToolbar?: boolean; view?: unknown }) => (
+    <div
+      data-testid="comment-panel"
+      data-compact-toolbar={String(compactToolbar)}
+      data-shared-view={String(view === state.commentView)}
+    />
+  ),
+  useCommentView: () => state.commentView,
+}))
 vi.mock('@/components/review/comment-input', () => ({ CommentInput: () => <div data-testid="comment-input" /> }))
 vi.mock('@/components/review/version-switcher', () => ({ VersionSwitcher: () => <span>Version switcher</span> }))
 vi.mock('@/components/review/share-dialog', () => ({ ShareDialog: () => <span>Share dialog</span> }))
@@ -129,6 +141,53 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(screen.getByTestId('video-player')).toHaveAttribute('data-compact', 'false')
     expect(screen.getByTestId('video-player').parentElement).toHaveClass('flex-1', 'min-h-0')
     expect(document.getElementById('review-comments')).toBeNull()
+  })
+
+  it('drops the Comments/Fields tabs and the comment toolbar on phones, keeping desktop as is', () => {
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+
+    // The tab row renders for md+ only.
+    const fieldsTab = screen.getByRole('button', { name: 'Fields' })
+    expect(fieldsTab.parentElement?.parentElement).toHaveClass('hidden', 'md:block')
+
+    // The panel hides its own toolbar below md and shares the page's view, which
+    // is what lets the phone More menu drive the same list.
+    const panel = screen.getByTestId('comment-panel')
+    expect(panel).toHaveAttribute('data-compact-toolbar', 'true')
+    expect(panel).toHaveAttribute('data-shared-view', 'true')
+  })
+
+  it('resets the comment view whenever the old panel would have been thrown away', async () => {
+    state.commentView.reset.mockClear()
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+    // Not on first load: pane open on the Comments tab keeps the view.
+    expect(state.commentView.reset).not.toHaveBeenCalled()
+
+    // Desktop Fields tab: the panel unmounts, as before, and the view resets.
+    await user.click(screen.getByRole('button', { name: 'Fields' }))
+    expect(screen.queryByTestId('comment-panel')).toBeNull()
+    expect(state.commentView.reset).toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Comments' }))
+    state.commentView.reset.mockClear()
+    await user.click(screen.getByRole('button', { name: 'Hide comments' }))
+    expect(state.commentView.reset).toHaveBeenCalled()
+  })
+
+  it('never leaves a phone on the Fields tab it has no way to leave', async () => {
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+    try {
+      // Fields picked at desktop width, then the screen drops below md.
+      await user.click(screen.getByRole('button', { name: 'Fields' }))
+      expect(screen.queryByTestId('comment-panel')).toBeNull()
+      act(() => setViewportWidth(767.5))
+
+      expect(screen.getByTestId('comment-panel')).toBeInTheDocument()
+    } finally {
+      act(() => setViewportWidth(1024))
+    }
   })
 
   it('turns the review surface into two columns in phone landscape', () => {
