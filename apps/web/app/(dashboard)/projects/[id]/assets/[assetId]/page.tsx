@@ -9,8 +9,9 @@ import { AudioPlayer } from '@/components/review/audio-player'
 import { ImageViewer } from '@/components/review/image-viewer'
 import { AnnotationCanvas } from '@/components/review/annotation-canvas'
 import { AnnotationOverlay } from '@/components/review/annotation-overlay'
-import { CommentPanel } from '@/components/review/comment-panel'
+import { CommentPanel, useCommentView } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
+import { MobileCommentMenuItems } from '@/components/review/mobile-comment-menu'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -67,6 +68,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   usePageTitle(asset?.name ?? null)
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('comments')
+  // One copy of the comment list's view, shared by the desktop toolbar and the
+  // phone More menu so both drive the same list.
+  const commentView = useCommentView()
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [mobileShareOpen, setMobileShareOpen] = useState(false)
   const deepLinkApplied = useRef(false)
@@ -504,6 +508,11 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               <DropdownMenu.Content
                 align="end"
                 sideOffset={6}
+                // "Search comments" opens and focuses the search field; don't
+                // hand focus back to the More button on top of it.
+                onCloseAutoFocus={(event) => {
+                  if (commentView.searchOpen) event.preventDefault()
+                }}
                 className="z-[100] min-w-[180px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl md:hidden"
               >
                 {totalAssets > 1 && (
@@ -580,6 +589,39 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <Share2 className="h-4 w-4" />
                   Share
                 </DropdownMenu.Item>
+                {/* Phones have no Fields tab; the same details live here. */}
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover">
+                    Details
+                    <ChevronRight className="h-4 w-4" />
+                  </DropdownMenu.SubTrigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.SubContent className="z-[101] w-60 space-y-2 rounded-xl border border-border bg-bg-elevated p-3 shadow-xl">
+                      {[
+                        { label: 'Name', value: asset.name },
+                        { label: 'Type', value: asset.asset_type.replace('_', ' ') },
+                        ...(currentVersion
+                          ? [
+                              { label: 'Version', value: `v${currentVersion.version_number}` },
+                              { label: 'Processing', value: currentVersion.processing_status },
+                            ]
+                          : []),
+                      ].map((detail) => (
+                        <div key={detail.label} className="flex items-center justify-between gap-4 text-xs">
+                          <span className="text-text-tertiary">{detail.label}</span>
+                          <span className="truncate font-medium capitalize text-text-primary">{detail.value}</span>
+                        </div>
+                      ))}
+                    </DropdownMenu.SubContent>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Sub>
+                {sidebarOpen && (
+                  <MobileCommentMenuItems
+                    view={commentView}
+                    comments={comments as any}
+                    assetType={asset.asset_type}
+                  />
+                )}
               </DropdownMenu.Content>
             </DropdownMenu.Portal>
           </DropdownMenu.Root>
@@ -657,8 +699,9 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         {/* Right: comments sidebar */}
         {sidebarOpen && (
           <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0 animate-in slide-in-from-right-2 duration-150">
-            {/* Tabs (Frame.io pill style) */}
-            <div className="px-4 pt-3 pb-2 shrink-0">
+            {/* Tabs (Frame.io pill style) — desktop only. On phones, Fields moves
+                to the More menu, so a lone Comments tab would be dead chrome. */}
+            <div className="hidden px-4 pt-3 pb-2 shrink-0 md:block">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
                 <button
                   onClick={() => setActiveTab('comments')}
@@ -687,8 +730,15 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
 
             {/* Content */}
             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              {activeTab === 'comments' ? (
-                <>
+              {/* Phones always show comments: the tab that could switch away
+                  from them is hidden below md. */}
+              <div
+                data-testid="review-comments-content"
+                className={cn(
+                  'min-h-0 flex-1 flex-col',
+                  activeTab === 'comments' ? 'flex' : 'flex md:hidden',
+                )}
+              >
                   <CommentPanel
                     comments={comments as any}
                     currentUserId={user?.id}
@@ -698,6 +748,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     onRemoveReaction={removeReaction}
                     onReply={() => {}}
                     onSubmitReply={handleSubmitReply}
+                    view={commentView}
+                    compactToolbar
                   />
                   {canComment && (
                     <CommentInput
@@ -708,9 +760,12 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                       annotationData={annotationData}
                     />
                   )}
-                </>
-              ) : (
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              </div>
+              {activeTab === 'fields' && (
+                <div
+                  data-testid="review-fields-content"
+                  className="hidden flex-1 overflow-y-auto p-4 space-y-4 md:block"
+                >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-text-tertiary">Name</span>

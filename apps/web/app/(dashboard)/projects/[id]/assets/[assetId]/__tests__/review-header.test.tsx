@@ -9,6 +9,8 @@ import ReviewPage from '../page'
 const state = vi.hoisted(() => ({
   routerPush: vi.fn(),
   setCurrentVersion: vi.fn(),
+  // Stands in for the page's shared comment view; identity is what's asserted.
+  commentView: { searchOpen: false },
 }))
 
 const asset = {
@@ -59,7 +61,16 @@ vi.mock('@/components/review/audio-player', () => ({ AudioPlayer: () => <div /> 
 vi.mock('@/components/review/image-viewer', () => ({ ImageViewer: () => <div /> }))
 vi.mock('@/components/review/annotation-canvas', () => ({ AnnotationCanvas: () => <div /> }))
 vi.mock('@/components/review/annotation-overlay', () => ({ AnnotationOverlay: () => <div /> }))
-vi.mock('@/components/review/comment-panel', () => ({ CommentPanel: () => <div /> }))
+vi.mock('@/components/review/comment-panel', () => ({
+  CommentPanel: ({ compactToolbar, view }: { compactToolbar?: boolean; view?: unknown }) => (
+    <div
+      data-testid="comment-panel"
+      data-compact-toolbar={String(compactToolbar)}
+      data-shared-view={String(view === state.commentView)}
+    />
+  ),
+  useCommentView: () => state.commentView,
+}))
 vi.mock('@/components/review/comment-input', () => ({ CommentInput: () => <div data-testid="comment-input" /> }))
 vi.mock('@/components/review/version-switcher', () => ({ VersionSwitcher: () => <span>Version switcher</span> }))
 vi.mock('@/components/review/share-dialog', () => ({ ShareDialog: () => <span>Share dialog</span> }))
@@ -129,6 +140,32 @@ describe('ReviewScreenInner mobile layout', () => {
     expect(screen.getByTestId('video-player')).toHaveAttribute('data-compact', 'false')
     expect(screen.getByTestId('video-player').parentElement).toHaveClass('flex-1', 'min-h-0')
     expect(document.getElementById('review-comments')).toBeNull()
+  })
+
+  it('drops the Comments/Fields tabs and the comment toolbar on phones, keeping desktop as is', async () => {
+    const user = userEvent.setup()
+    render(<ReviewPage params={{ id: 'project-1', assetId: asset.id }} />)
+
+    // The tab row renders for md+ only.
+    const fieldsTab = screen.getByRole('button', { name: 'Fields' })
+    expect(fieldsTab.parentElement?.parentElement).toHaveClass('hidden', 'md:block')
+
+    // The panel hides its own toolbar below md and shares the page's view, which
+    // is what lets the phone More menu drive the same list.
+    const panel = screen.getByTestId('comment-panel')
+    expect(panel).toHaveAttribute('data-compact-toolbar', 'true')
+    expect(panel).toHaveAttribute('data-shared-view', 'true')
+
+    const commentsContent = screen.getByTestId('review-comments-content')
+    expect(commentsContent).toHaveClass('flex')
+    expect(commentsContent).not.toHaveClass('md:hidden')
+    expect(screen.queryByTestId('review-fields-content')).toBeNull()
+
+    // Switching to Fields on desktop must not strand a phone on a tab it can't
+    // leave: comments stay visible below md, Fields shows from md up only.
+    await user.click(fieldsTab)
+    expect(commentsContent).toHaveClass('flex', 'md:hidden')
+    expect(screen.getByTestId('review-fields-content')).toHaveClass('hidden', 'md:block')
   })
 
   it('turns the review surface into two columns in phone landscape', () => {
