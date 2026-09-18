@@ -20,6 +20,7 @@ import { useReviewStore } from '@/stores/review-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { useComments } from '@/hooks/use-comments'
 import { useSSE } from '@/hooks/use-sse'
+import { useCommentsTabOnPhone } from '@/hooks/use-comments-tab-on-phone'
 import { api } from '@/lib/api'
 import { useUploadStore } from '@/stores/upload-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
@@ -82,20 +83,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     if (!sidebarOpen || activeTab !== 'comments') resetCommentView()
   }, [sidebarOpen, activeTab, resetCommentView])
 
-  // Phones have no tab row, so they must never be left on Fields — e.g. a
-  // tablet rotated below md after Fields was picked at desktop width.
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return
-    // The exact complement of Tailwind's md, so no fractional width falls
-    // between "tab row hidden" and "guard active".
-    const desktop = window.matchMedia('(min-width: 768px)')
-    const showCommentsOnPhone = () => {
-      if (!desktop.matches) setActiveTab('comments')
-    }
-    showCommentsOnPhone()
-    desktop.addEventListener('change', showCommentsOnPhone)
-    return () => desktop.removeEventListener('change', showCommentsOnPhone)
-  }, [])
+  useCommentsTabOnPhone(useCallback(() => setActiveTab('comments'), []))
   const deepLinkApplied = useRef(false)
 
   // Fetch folder tree to build the folder path for the breadcrumb
