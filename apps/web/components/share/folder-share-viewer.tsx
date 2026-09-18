@@ -871,9 +871,10 @@ function ShareReviewInner({
   }
 
   return (
-    // 100svh on phones: iOS Safari's 100vh is taller than the visible screen and
-    // hides the comment composer under the browser toolbar.
-    <div className="flex flex-col h-[100svh] bg-bg-primary text-text-primary md:h-screen">
+    // h-full of the fixed inset-0 wrapper, not h-screen: iOS Safari's 100vh is
+    // taller than the visible screen and hides the composer under its toolbar,
+    // including on phones wide enough in landscape to count as md.
+    <div className="flex flex-col h-full bg-bg-primary text-text-primary">
       {/* Top bar — same style as project review */}
       <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
         <div className="flex items-center gap-1 min-w-0 flex-1">
@@ -887,11 +888,12 @@ function ShareReviewInner({
             <VersionSwitcher versions={versions} />
           )}
           {allowDownload && (
-            <button className="flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium text-text-inverse bg-accent hover:bg-accent-hover transition-colors" onClick={() => handleDownload(token, asset.id, shareSession)}>
-              <Download className="h-3 w-3" /> Download
+            <button aria-label="Download" className="flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium text-text-inverse bg-accent hover:bg-accent-hover transition-colors md:px-3" onClick={() => handleDownload(token, asset.id, shareSession)}>
+              {/* Icon-only on phones, where the header also carries ⋯ and the name needs the room. */}
+              <Download className="h-3 w-3" /> <span className="hidden md:inline">Download</span>
             </button>
           )}
-          <button onClick={() => setSidebarOpen(v => !v)} className="flex items-center justify-center h-8 w-8 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
+          <button onClick={() => setSidebarOpen(v => !v)} aria-label={sidebarOpen ? 'Hide comments' : 'Show comments'} aria-controls={sidebarOpen ? 'review-comments' : undefined} aria-expanded={sidebarOpen} className="flex items-center justify-center h-8 w-8 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
             {sidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
           </button>
           {/* Phones: the comment toolbar is hidden, so its controls live here. */}
@@ -992,7 +994,7 @@ function ShareReviewInner({
 
         {/* Right sidebar — reuses project comment panel */}
         {sidebarOpen && (
-          <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0">
+          <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0">
             {/* Tabs — desktop only; phones always show comments. */}
             <div className="hidden px-4 pt-3 pb-2 shrink-0 md:block">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">

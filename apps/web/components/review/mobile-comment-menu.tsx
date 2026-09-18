@@ -9,7 +9,7 @@ import type {
   CommentVisibility,
   FilterState,
   SortMode,
-} from "./comment-panel";
+} from "./comment-view";
 
 // Matches the rest of the phone review More menu.
 const ITEM_CLASS =
