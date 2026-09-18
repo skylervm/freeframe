@@ -14,14 +14,36 @@ describe('redactUrlCredentials', () => {
     )
   })
 
+  it('redacts an invite path token', () => {
+    expect(redactUrlCredentials('/invite/fake-invite-token')).toBe('/invite/REDACTED')
+  })
+
+  it('redacts a nested api invite path token', () => {
+    expect(redactUrlCredentials('/api/auth/invite/fake-invite-token')).toBe('/api/auth/invite/REDACTED')
+  })
+
   it('redacts both a path token and a query token on the same url', () => {
     expect(redactUrlCredentials('/share/fake-share-token?access_token=fake-access')).toBe(
       '/share/REDACTED?access_token=REDACTED',
     )
   })
 
+  it('redacts a bare query string with no leading "?"', () => {
+    expect(redactUrlCredentials('token=fake-token&page=2')).toBe('token=REDACTED&page=2')
+  })
+
+  it('redacts a sensitive param in free text, e.g. a header or breadcrumb message', () => {
+    expect(redactUrlCredentials('GET /projects/5 referred from /share/fake-share-token')).toBe(
+      'GET /projects/5 referred from /share/REDACTED',
+    )
+  })
+
   it('leaves urls with nothing sensitive unchanged', () => {
     expect(redactUrlCredentials('/api/projects?page=2')).toBe('/api/projects?page=2')
+  })
+
+  it('does not throw on malformed percent-encoding in a query name', () => {
+    expect(() => redactUrlCredentials('/api/projects?%E0%A4%A=1')).not.toThrow()
   })
 })
 
@@ -44,6 +66,26 @@ describe('redactSentryEvent', () => {
     expect(result.request?.headers?.Cookie).toBe('REDACTED')
     expect(result.request?.headers?.['X-Api-Key']).toBe('REDACTED')
     expect(result.request?.headers?.['content-type']).toBe('application/json')
+  })
+
+  it('redacts a share token carried in non-named headers (referer, next-url, next-router-state-tree)', () => {
+    const event = {
+      request: {
+        headers: {
+          referer: 'https://review.frombelow.studio/share/fake-share-token',
+          'next-url': '/share/fake-share-token',
+          'next-router-state-tree': '["",{"children":["share",{"children":["/share/fake-share-token",{}]}]}]',
+        },
+      },
+    }
+
+    const result = redactSentryEvent(event)
+
+    expect(result.request?.headers?.referer).toBe('https://review.frombelow.studio/share/REDACTED')
+    expect(result.request?.headers?.['next-url']).toBe('/share/REDACTED')
+    expect(result.request?.headers?.['next-router-state-tree']).toBe(
+      '["",{"children":["share",{"children":["/share/REDACTED",{}]}]}]',
+    )
   })
 
   it('deletes request.cookies and request.data entirely', () => {
@@ -79,6 +121,22 @@ describe('redactSentryEvent', () => {
     expect((result.request?.query_string as Record<string, unknown>).page).toBe('2')
   })
 
+  it('redacts a string request.query_string with no leading "?"', () => {
+    const event = { request: { query_string: 'access_token=fake-token&page=2' } }
+    const result = redactSentryEvent(event)
+    expect(result.request?.query_string).toBe('access_token=REDACTED&page=2')
+  })
+
+  it('redacts event.transaction', () => {
+    const event = { transaction: '/share/[token]' }
+    // Not path-token shaped ([token] is the route pattern, not a value) but
+    // must still pass through the same redaction as everything else without
+    // throwing, and redact a query if the transaction name carries one.
+    const eventWithQuery = { transaction: '/share/fake-share-token' }
+    expect(redactSentryEvent(event).transaction).toBe('/share/[token]')
+    expect(redactSentryEvent(eventWithQuery).transaction).toBe('/share/REDACTED')
+  })
+
   it('redacts breadcrumb urls and drops console breadcrumbs', () => {
     const event = {
       breadcrumbs: [
@@ -94,20 +152,54 @@ describe('redactSentryEvent', () => {
     expect(result.breadcrumbs?.[0].data?.url).toBe('/share/REDACTED?token=REDACTED')
     expect(result.breadcrumbs?.[1].message).toBe('navigated to /share/REDACTED')
   })
+
+  it('redacts navigation breadcrumb data.from and data.to', () => {
+    const event = {
+      breadcrumbs: [
+        {
+          category: 'navigation',
+          data: { from: '/share/fake-share-token', to: '/invite/fake-invite-token' },
+        },
+      ],
+    }
+
+    const result = redactSentryEvent(event)
+
+    expect(result.breadcrumbs?.[0].data?.from).toBe('/share/REDACTED')
+    expect(result.breadcrumbs?.[0].data?.to).toBe('/invite/REDACTED')
+  })
 })
 
 describe('redactBreadcrumb', () => {
-  it('redacts data.url, http.query, and message', () => {
+  it('redacts every string field on breadcrumb.data, not just url/http.query', () => {
+    const breadcrumb = {
+      category: 'navigation',
+      data: {
+        from: '/share/fake-share-token',
+        to: '/invite/fake-invite-token',
+        url: '/api/export?access_token=fake-token',
+        'http.query': 'token=fake-token',
+        statusCode: 200,
+      },
+    }
+
+    const result = redactBreadcrumb(breadcrumb)
+
+    expect(result?.data?.from).toBe('/share/REDACTED')
+    expect(result?.data?.to).toBe('/invite/REDACTED')
+    expect(result?.data?.url).toBe('/api/export?access_token=REDACTED')
+    expect(result?.data?.['http.query']).toBe('token=REDACTED')
+    expect(result?.data?.statusCode).toBe(200)
+  })
+
+  it('redacts message', () => {
     const breadcrumb = {
       category: 'xhr',
-      data: { url: '/api/export?access_token=fake-token', 'http.query': '?token=fake-token' },
       message: 'GET /share/fake-share-token',
     }
 
     const result = redactBreadcrumb(breadcrumb)
 
-    expect(result?.data?.url).toBe('/api/export?access_token=REDACTED')
-    expect(result?.data?.['http.query']).toBe('token=REDACTED')
     expect(result?.message).toBe('GET /share/REDACTED')
   })
 
