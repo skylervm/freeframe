@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
+import * as Sentry from '@sentry/nextjs'
 
 interface ErrorProps {
   error: Error & { digest?: string }
@@ -9,6 +10,10 @@ interface ErrorProps {
 }
 
 export default function DashboardError({ error, reset }: ErrorProps) {
+  React.useEffect(() => {
+    Sentry.captureException(error)
+  }, [error])
+
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 px-4 py-16 text-center">
       {/* Icon */}
