@@ -1,3 +1,5 @@
+const { withSentryConfig } = require('@sentry/nextjs')
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
@@ -13,6 +15,13 @@ const nextConfig = {
       },
     ],
   },
+  experimental: {
+    instrumentationHook: true,
+  },
 }
 
-module.exports = nextConfig
+module.exports = withSentryConfig(nextConfig, {
+  org: 'from-below',
+  project: 'freeframe-web',
+  silent: !process.env.CI,
+})
