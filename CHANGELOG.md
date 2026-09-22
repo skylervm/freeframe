@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Project automation can now read complete review notes headlessly** — an authorized project token can retrieve all comments, replies, timecodes, resolution state, and visibility for one asset version through the new read-only review-comments endpoint. The existing clip-marker endpoint remains unchanged for edit automation.
 - **Bucket CORS rules are tightened and the public-read bucket policy is gone** — the automatic bucket setup now pins `AllowedHeaders` to the headers browser uploads actually send (`Content-Type`, `Content-MD5`, `x-amz-content-sha256`, `x-amz-date`, `x-amz-decoded-content-length`) instead of `*`, and drops `DELETE` (no presigned-DELETE flow exists). It also no longer publishes a public-read policy on `processed/*`: HLS playback goes through the presign proxy, so the policy was dead weight that exposed any processed object to anyone who guessed a key. `docs/deployment.md` has been corrected to match. (#202)
 
 ### Fixed
