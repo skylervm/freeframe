@@ -622,6 +622,17 @@ export function ShareLinkContent({
           }[];
           subfolders: { id: string; name: string; item_count?: number }[];
         }>(`/share/${token}/assets?page=1&per_page=50`)
+        .catch(() =>
+          api.get<{
+            assets: {
+              id: string;
+              name: string;
+              asset_type: string;
+              thumbnail_url: string | null;
+            }[];
+            subfolders: { id: string; name: string; item_count?: number }[];
+          }>(`/share/${token}/assets?page=1&per_page=50`, { unauthenticated: true }),
+        )
         .then((data) => {
           setPreviewThumbnails(
             data.assets.slice(0, 4).map((a) => ({

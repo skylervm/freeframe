@@ -43,11 +43,25 @@ describe('ShareLinkContent', () => {
   })
 
   it('distinguishes a preview request failure from an empty share link', async () => {
-    api.get.mockRejectedValue(new Error('Network error'))
+    api.get.mockRejectedValueOnce(new Error('Expired token')).mockRejectedValueOnce(new Error('Network error'))
 
     render(<ShareLinkContent token="link-token" projectId="project-1" onBack={vi.fn()} frontendUrl="https://freeframe.test" />)
 
     expect(await screen.findByText('Could not load shared content')).toBeInTheDocument()
     expect(screen.queryByText('No content yet')).not.toBeInTheDocument()
+  })
+
+  it('retries a public preview without credentials after an authenticated request fails', async () => {
+    api.get
+      .mockRejectedValueOnce(new Error('Expired token'))
+      .mockResolvedValueOnce({
+        assets: [{ id: 'asset-1', name: 'Episode 1 Interview', asset_type: 'video', thumbnail_url: null }],
+        subfolders: [],
+      })
+
+    render(<ShareLinkContent token="link-token" projectId="project-1" onBack={vi.fn()} frontendUrl="https://freeframe.test" />)
+
+    expect(await screen.findByText('Episode 1 Interview')).toBeInTheDocument()
+    expect(api.get).toHaveBeenLastCalledWith('/share/link-token/assets?page=1&per_page=50', { unauthenticated: true })
   })
 })
