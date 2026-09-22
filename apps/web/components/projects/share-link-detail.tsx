@@ -578,6 +578,7 @@ export function ShareLinkContent({
   const [previewFolders, setPreviewFolders] = React.useState<
     { id: string; name: string; item_count: number }[]
   >([]);
+  const [previewError, setPreviewError] = React.useState(false);
 
   React.useEffect(() => {
     if (shareLink) {
@@ -589,6 +590,7 @@ export function ShareLinkContent({
   // Fetch preview data for shares
   React.useEffect(() => {
     if (!shareLink) return;
+    setPreviewError(false);
     const folderId = shareLink.folder_id;
     const isProjectShare = !folderId && !shareLink.asset_id;
 
@@ -602,22 +604,27 @@ export function ShareLinkContent({
           thumbnail_url: string | null;
         }>(`/assets/${shareLink.asset_id}`)
         .then((asset) => setPreviewThumbnails([asset]))
-        .catch(() => setPreviewThumbnails([]));
+        .catch(() => {
+          setPreviewThumbnails([]);
+          setPreviewError(true);
+        });
       setPreviewFolders([]);
     } else if (folderId || isProjectShare) {
       // Folder, project root, or multi-share: use the share endpoint
       // to get only the items actually included in this share link
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      const headers: Record<string, string> = {};
-      try {
-        const t = localStorage.getItem('ff_access_token');
-        if (t) headers['Authorization'] = `Bearer ${t}`;
-      } catch {}
-      fetch(`${API_URL}/share/${token}/assets?page=1&per_page=50`, { headers })
-        .then((r) => r.ok ? r.json() : Promise.reject())
+      api
+        .get<{
+          assets: {
+            id: string;
+            name: string;
+            asset_type: string;
+            thumbnail_url: string | null;
+          }[];
+          subfolders: { id: string; name: string; item_count?: number }[];
+        }>(`/share/${token}/assets?page=1&per_page=50`)
         .then((data) => {
           setPreviewThumbnails(
-            (data.assets || []).slice(0, 4).map((a: any) => ({
+            data.assets.slice(0, 4).map((a) => ({
               id: a.id,
               name: a.name,
               asset_type: a.asset_type,
@@ -625,7 +632,7 @@ export function ShareLinkContent({
             }))
           );
           setPreviewFolders(
-            (data.subfolders || []).map((f: any) => ({
+            data.subfolders.map((f) => ({
               id: f.id,
               name: f.name,
               item_count: f.item_count ?? 0,
@@ -635,6 +642,7 @@ export function ShareLinkContent({
         .catch(() => {
           setPreviewThumbnails([]);
           setPreviewFolders([]);
+          setPreviewError(true);
         });
     }
   }, [shareLink, projectId]);
@@ -693,7 +701,19 @@ export function ShareLinkContent({
         />
 
         {/* Content preview — matches project view style */}
-        {previewFolders.length > 0 || previewThumbnails.length > 0 ? (
+        {previewError ? (
+          <div className="rounded-xl border border-border bg-bg-tertiary/50 p-8 flex flex-col items-center justify-center text-center space-y-3">
+            <div className="h-12 w-12 rounded-full bg-bg-tertiary flex items-center justify-center">
+              <EyeOff className="h-6 w-6 text-text-tertiary" />
+            </div>
+            <p className="text-sm font-medium text-text-primary">
+              Could not load shared content
+            </p>
+            <p className="text-xs text-text-tertiary">
+              Refresh the page and try again.
+            </p>
+          </div>
+        ) : previewFolders.length > 0 || previewThumbnails.length > 0 ? (
           <div className="space-y-4">
             {/* Folders */}
             {previewFolders.length > 0 && (
