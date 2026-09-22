@@ -68,6 +68,11 @@ membership-only owner and automation paths.
 - #21 (`5204aae`): share-link review (`ShareReviewInner`, used by project and folder links) gets the same layout, with the comment controls under a phone-only ⋯. Device test pending (Plane FREEFRAME-7).
 - Open, tracked in Plane project "Free Frame": FREEFRAME-2 (Attachments/Unread/Mentions filters don't filter), FREEFRAME-4 (nits), FREEFRAME-5 (single-asset share page has no phone layout), FREEFRAME-6 (comment export fails silently).
 
+### Share-link preview follow-up — complete
+
+- #25 (`d4294c3`): dashboard share-link previews render returned multi-share assets and show a load failure instead of a false empty state.
+- #26 (`309e9ca`): public previews retry without credentials after an authenticated request fails; the unauthenticated request path never reads or refreshes login state.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
