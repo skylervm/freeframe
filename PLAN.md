@@ -73,6 +73,10 @@ membership-only owner and automation paths.
 - #25 (`d4294c3`): dashboard share-link previews render returned multi-share assets and show a load failure instead of a false empty state.
 - #26 (`309e9ca`): public previews retry without credentials after an authenticated request fails; the unauthenticated request path never reads or refreshes login state.
 
+### Workspace membership management — complete
+
+- #28 (`47c47b3`): Settings → Workspace gives workspace owners an explicit roster for searching, adding, and removing members. Platform accounts and workspace membership remain distinct; the UI guards asynchronous roster and identity states, stale searches, concurrent mutations, and deleted-account memberships.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
