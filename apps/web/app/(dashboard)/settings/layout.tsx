@@ -3,8 +3,10 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { User, Bell, Shield, Palette, Brush } from 'lucide-react'
+import useSWR from 'swr'
+import { User, Bell, Shield, Palette, Brush, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
 interface SettingsNavItem {
@@ -12,6 +14,7 @@ interface SettingsNavItem {
   label: string
   icon: React.ElementType
   adminOnly?: boolean
+  workspaceOwnerOnly?: boolean
 }
 
 const settingsNavItems: SettingsNavItem[] = [
@@ -20,7 +23,12 @@ const settingsNavItems: SettingsNavItem[] = [
   { href: '/settings/notifications', label: 'Notifications', icon: Bell },
   { href: '/settings/branding', label: 'Branding', icon: Brush, adminOnly: true },
   { href: '/settings/admin', label: 'Admin', icon: Shield, adminOnly: true },
+  { href: '/settings/workspace', label: 'Workspace', icon: Users, workspaceOwnerOnly: true },
 ]
+
+type Workspace = {
+  role: 'owner' | 'member'
+}
 
 export default function SettingsLayout({
   children,
@@ -29,6 +37,10 @@ export default function SettingsLayout({
 }) {
   const pathname = usePathname()
   const { user, isSuperAdmin } = useAuthStore()
+  const { data: workspace } = useSWR<Workspace>(
+    user ? '/workspace' : null,
+    () => api.get<Workspace>('/workspace'),
+  )
 
   return (
     <div className="flex h-full">
@@ -45,6 +57,7 @@ export default function SettingsLayout({
           {settingsNavItems.map((item) => {
             // Hide admin-only items from non-admins
             if (item.adminOnly && !isSuperAdmin) return null
+            if (item.workspaceOwnerOnly && workspace?.role !== 'owner') return null
 
             const isActive = pathname === item.href || pathname?.startsWith(item.href + '/')
             const Icon = item.icon
