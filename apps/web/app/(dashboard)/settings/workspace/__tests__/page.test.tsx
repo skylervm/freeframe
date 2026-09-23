@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import WorkspaceSettingsPage from '../page'
 
 const state = vi.hoisted(() => ({
-  api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
   mutate: vi.fn(),
   workspace: { id: 'workspace-1', name: 'Workspace', role: 'owner' },
   members: [{ id: 'owner-membership', user_id: 'owner-1', role: 'owner' }],
@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   membersError: undefined as Error | undefined,
   memberUsersLoading: false,
   memberUsersError: undefined as Error | undefined,
+  memberUsers: [{ id: 'owner-1', name: 'Owner', email: 'owner@example.test' }],
 }))
 
 vi.mock('swr', () => ({
@@ -18,7 +19,7 @@ vi.mock('swr', () => ({
     if (key === '/workspace') return { data: state.workspace, isLoading: false }
     if (key === '/workspace/members') return { data: state.members, isLoading: state.membersLoading, error: state.membersError }
     if (key?.startsWith('/users?ids=')) return {
-      data: [{ id: 'owner-1', name: 'Owner', email: 'owner@example.test' }],
+      data: state.memberUsers,
       isLoading: state.memberUsersLoading,
       error: state.memberUsersError,
     }
@@ -38,6 +39,7 @@ describe('WorkspaceSettingsPage', () => {
     state.membersError = undefined
     state.memberUsersLoading = false
     state.memberUsersError = undefined
+    state.memberUsers = [{ id: 'owner-1', name: 'Owner', email: 'owner@example.test' }]
     state.workspace = { id: 'workspace-1', name: 'Workspace', role: 'owner' }
   })
 
@@ -49,7 +51,7 @@ describe('WorkspaceSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Search' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Add' }))
 
-    await waitFor(() => expect(state.api.post).toHaveBeenCalledWith('/workspace/members', { user_id: 'user-1', role: 'member' }))
+    await waitFor(() => expect(state.api.post).toHaveBeenCalledWith('/workspace/members', { user_id: 'user-1', role: 'viewer' }))
     expect(state.mutate).toHaveBeenCalledWith('/workspace/members')
   })
 
@@ -92,7 +94,7 @@ describe('WorkspaceSettingsPage', () => {
   it('keeps deleted-user memberships removable', () => {
     state.members = [
       { id: 'owner-membership', user_id: 'owner-1', role: 'owner' },
-      { id: 'deleted-membership', user_id: 'deleted-user', role: 'member' },
+      { id: 'deleted-membership', user_id: 'deleted-user', role: 'viewer' },
     ]
     render(<WorkspaceSettingsPage />)
 
@@ -112,7 +114,7 @@ describe('WorkspaceSettingsPage', () => {
   })
 
   it('rejects users who are not workspace owners', () => {
-    state.workspace = { id: 'workspace-1', name: 'Workspace', role: 'member' }
+    state.workspace = { id: 'workspace-1', name: 'Workspace', role: 'viewer' }
     render(<WorkspaceSettingsPage />)
 
     expect(screen.getByText('Workspace owner access is required.')).toBeInTheDocument()
@@ -121,8 +123,36 @@ describe('WorkspaceSettingsPage', () => {
   it('does not offer a remove action for workspace owners', () => {
     render(<WorkspaceSettingsPage />)
 
-    expect(screen.getAllByText('Owner')).toHaveLength(2)
+    expect(screen.getByRole('combobox', { name: 'Owner role' })).toHaveValue('owner')
     expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument()
+  })
+
+  it('adds a member with the selected workspace role', async () => {
+    state.api.get.mockResolvedValue([{ id: 'user-1', name: 'Japeth', email: 'japeth@example.test' }])
+    render(<WorkspaceSettingsPage />)
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'New member role' }), { target: { value: 'reviewer' } })
+    fireEvent.change(screen.getByPlaceholderText('Search by name or email'), { target: { value: 'Japeth' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(state.api.post).toHaveBeenCalledWith('/workspace/members', { user_id: 'user-1', role: 'reviewer' }))
+  })
+
+  it('updates an existing member role', async () => {
+    state.members = [
+      { id: 'owner-membership', user_id: 'owner-1', role: 'owner' },
+      { id: 'member-membership', user_id: 'member-1', role: 'viewer' },
+    ]
+    state.memberUsers = [
+      { id: 'owner-1', name: 'Owner', email: 'owner@example.test' },
+      { id: 'member-1', name: 'Member', email: 'member@example.test' },
+    ]
+    render(<WorkspaceSettingsPage />)
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Member role' }), { target: { value: 'reviewer' } })
+
+    await waitFor(() => expect(state.api.patch).toHaveBeenCalledWith('/workspace/members/member-membership', { role: 'reviewer' }))
   })
 
   it('clears an old search result when the query changes', async () => {

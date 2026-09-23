@@ -55,6 +55,7 @@ interface CommentPanelProps {
   onRemoveReaction: (commentId: string, emoji: string) => Promise<void>;
   onReply: (parentId: string) => void;
   onSubmitReply?: (parentId: string, body: string) => Promise<void>;
+  canComment?: boolean;
   /** Compare mode: route comment-timecode clicks to a pane-scoped transport instead of the global store. */
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   /** Compare mode: route annotation display to a pane-scoped overlay instead of the global store. */
@@ -380,6 +381,7 @@ interface CommentItemProps {
   onReply: (parentId: string) => void;
   onCancelReply: () => void;
   onSubmitReply?: (parentId: string, body: string) => Promise<void>;
+  canComment: boolean;
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   onShowAnnotation?: (drawingData: Record<string, unknown> | null) => void;
 }
@@ -398,6 +400,7 @@ function CommentItem({
   onReply,
   onCancelReply,
   onSubmitReply,
+  canComment,
   onSeekToTimecode,
   onShowAnnotation,
 }: CommentItemProps) {
@@ -621,6 +624,7 @@ function CommentItem({
                       ? "border-accent/40 bg-accent/10 text-accent"
                       : "border-border bg-bg-tertiary text-text-secondary hover:border-white/20",
                   )}
+                  disabled={!canComment}
                   onClick={() => handleReactionClick(r.emoji, r.userReacted)}
                 >
                   {r.emoji}
@@ -631,8 +635,8 @@ function CommentItem({
           )}
 
           {/* Action row: Reply text + hover icons */}
-          <div className="mt-1.5 flex items-center gap-2">
-            {depth === 0 && (
+          {canComment && <div className="mt-1.5 flex items-center gap-2">
+            {depth === 0 && onSubmitReply && (
               <button
                 className="text-[13px] font-medium text-text-tertiary hover:text-text-secondary transition-colors"
                 onClick={() => onReply(comment.id)}
@@ -698,10 +702,10 @@ function CommentItem({
                 </button>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Inline reply input */}
-          {isReplyingHere && onSubmitReply && (
+          {isReplyingHere && canComment && onSubmitReply && (
             <InlineReplyInput
               parentId={comment.id}
               onSubmit={onSubmitReply}
@@ -742,6 +746,7 @@ function CommentItem({
                   onReply={onReply}
                   onCancelReply={onCancelReply}
                   onSubmitReply={onSubmitReply}
+                  canComment={canComment}
                   onSeekToTimecode={onSeekToTimecode}
                   onShowAnnotation={onShowAnnotation}
                 />
@@ -766,6 +771,7 @@ export function CommentPanel({
   onRemoveReaction,
   onReply,
   onSubmitReply,
+  canComment = true,
   onSeekToTimecode,
   onShowAnnotation,
   exportVersionId,
@@ -1318,6 +1324,7 @@ export function CommentPanel({
                 onReply={handleReply}
                 onCancelReply={() => setReplyingTo(null)}
                 onSubmitReply={onSubmitReply}
+                canComment={canComment}
                 onSeekToTimecode={onSeekToTimecode}
                 onShowAnnotation={onShowAnnotation}
               />

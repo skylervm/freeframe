@@ -370,7 +370,8 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
                 onAddReaction={async (id, e) => { await sideA.addReaction(id, e) }}
                 onRemoveReaction={async (id, e) => { await sideA.removeReaction(id, e) }}
                 onReply={() => {}}
-                onSubmitReply={handleReplyA}
+                onSubmitReply={canComment ? handleReplyA : undefined}
+                canComment={canComment}
                 onSeekToTimecode={(tc, pause) => {
                   transport.seekTo(tc + timingA.offset)
                   // Normal-player parity: comment clicks pass pause=true.
@@ -585,7 +586,8 @@ export function CompareOverlay({ asset, versions, rightVersion, onClose, canComm
                 onAddReaction={async (id, e) => { await sideB.addReaction(id, e) }}
                 onRemoveReaction={async (id, e) => { await sideB.removeReaction(id, e) }}
                 onReply={() => {}}
-                onSubmitReply={handleReplyB}
+                onSubmitReply={canComment ? handleReplyB : undefined}
+                canComment={canComment}
                 onSeekToTimecode={(tc, pause) => {
                   transport.seekTo(tc + timingB.offset)
                   if (pause && transport.isPlaying) transport.toggle()

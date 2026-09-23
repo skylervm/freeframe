@@ -52,6 +52,23 @@ function renderWithSharedView() {
 const bodies = () => screen.getAllByText(/^Comment /).map((el) => el.textContent)
 
 describe('CommentPanel with a shared view on phones', () => {
+  it('keeps Viewer comment controls read-only', () => {
+    render(
+      <CommentPanel
+        comments={comments}
+        onResolve={noop} onDelete={noop}
+        onAddReaction={noop} onRemoveReaction={noop}
+        onReply={() => {}}
+        onSubmitReply={noop}
+        canComment={false}
+      />,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Reply' })).toBeNull()
+    expect(screen.queryByTitle('Add reaction')).toBeNull()
+    expect(screen.queryByTitle('Resolve')).toBeNull()
+  })
+
   it('hides its inline toolbar below md but keeps it for desktop', () => {
     renderWithSharedView()
 
