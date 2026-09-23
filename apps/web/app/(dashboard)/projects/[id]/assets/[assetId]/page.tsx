@@ -44,7 +44,7 @@ import {
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
-import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
+import type { Project, ProjectRole, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
 
 const acceptByType: Record<string, string> = {
   video: 'video/*',
@@ -136,8 +136,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     () => api.get<ProjectMember[]>(`/projects/${projectId}/members`),
   )
   const currentMember = members?.find((m) => m.user_id === user?.id)
-  const currentRole = currentMember?.role ?? 'viewer'
-  const canComment = currentRole !== 'viewer'
+  const currentRole: ProjectRole = project?.role ?? currentMember?.role ?? 'viewer'
+  const canComment = asset?.can_comment ?? (currentRole !== 'viewer')
 
   // Fetch all assets for navigation (1 of N)
   const { data: allAssets } = useSWR<AssetResponse[]>(
@@ -756,7 +756,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     onAddReaction={addReaction}
                     onRemoveReaction={removeReaction}
                     onReply={() => {}}
-                    onSubmitReply={handleSubmitReply}
+                    onSubmitReply={canComment ? handleSubmitReply : undefined}
+                    canComment={canComment}
                     view={commentView}
                     compactToolbar
                   />

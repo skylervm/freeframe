@@ -8,6 +8,7 @@ import { User, Bell, Shield, Palette, Brush, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
+import type { WorkspaceRole } from '@/types'
 
 interface SettingsNavItem {
   href: string
@@ -27,7 +28,7 @@ const settingsNavItems: SettingsNavItem[] = [
 ]
 
 type Workspace = {
-  role: 'owner' | 'member'
+  role: WorkspaceRole
 }
 
 export default function SettingsLayout({

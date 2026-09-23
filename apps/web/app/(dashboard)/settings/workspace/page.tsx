@@ -2,24 +2,31 @@
 
 import * as React from 'react'
 import useSWR, { mutate } from 'swr'
-import { Crown, Loader2, Search, UserPlus, Users } from 'lucide-react'
+import { Loader2, Search, UserPlus, Users } from 'lucide-react'
 import { api } from '@/lib/api'
 import { Avatar } from '@/components/shared/avatar'
 import { Button } from '@/components/ui/button'
 import { useAuthStore } from '@/stores/auth-store'
-import type { User } from '@/types'
+import type { User, WorkspaceRole } from '@/types'
 
 type Workspace = {
   id: string
   name: string
-  role: 'owner' | 'member'
+  role: WorkspaceRole
 }
 
 type WorkspaceMember = {
   id: string
   user_id: string
-  role: 'owner' | 'member'
+  role: WorkspaceRole
 }
+
+const workspaceRoles: Array<{ value: WorkspaceRole; label: string }> = [
+  { value: 'viewer', label: 'Viewer' },
+  { value: 'reviewer', label: 'Reviewer' },
+  { value: 'editor', label: 'Editor' },
+  { value: 'owner', label: 'Owner' },
+]
 
 export default function WorkspaceSettingsPage() {
   const [query, setQuery] = React.useState('')
@@ -29,6 +36,7 @@ export default function WorkspaceSettingsPage() {
   const [error, setError] = React.useState('')
   const [pendingMemberId, setPendingMemberId] = React.useState<string | null>(null)
   const [pendingUserId, setPendingUserId] = React.useState<string | null>(null)
+  const [newMemberRole, setNewMemberRole] = React.useState<WorkspaceRole>('viewer')
   const searchRevision = React.useRef(0)
   const { user } = useAuthStore()
 
@@ -80,7 +88,7 @@ export default function WorkspaceSettingsPage() {
     setPendingUserId(userId)
     setError('')
     try {
-      await api.post('/workspace/members', { user_id: userId, role: 'member' })
+      await api.post('/workspace/members', { user_id: userId, role: newMemberRole })
       await mutate('/workspace/members')
       setResults((current) => current.filter((person) => person.id !== userId))
     } catch (err: unknown) {
@@ -90,12 +98,25 @@ export default function WorkspaceSettingsPage() {
     }
   }
 
+  const updateMemberRole = async (memberId: string, role: WorkspaceRole) => {
+    setPendingMemberId(memberId)
+    setError('')
+    try {
+      await api.patch(`/workspace/members/${memberId}`, { role })
+      await Promise.all([mutate('/workspace'), mutate('/workspace/members')])
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not update workspace role')
+    } finally {
+      setPendingMemberId(null)
+    }
+  }
+
   const removeMember = async (memberId: string) => {
     setPendingMemberId(memberId)
     setError('')
     try {
       await api.delete(`/workspace/members/${memberId}`)
-      await mutate('/workspace/members')
+      await Promise.all([mutate('/workspace'), mutate('/workspace/members')])
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not remove workspace member')
     } finally {
@@ -127,7 +148,7 @@ export default function WorkspaceSettingsPage() {
         </div>
         <div>
           <h1 className="text-xl font-semibold text-text-primary">Workspace access</h1>
-          <p className="text-sm text-text-secondary">Members can view workspace-wide folders.</p>
+          <p className="text-sm text-text-secondary">Roles apply to every workspace-wide project.</p>
         </div>
       </div>
 
@@ -149,6 +170,9 @@ export default function WorkspaceSettingsPage() {
             placeholder="Search by name or email"
             className="min-w-0 flex-1 rounded-md border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary outline-none focus:border-border-focus"
           />
+          <select value={newMemberRole} onChange={(event) => setNewMemberRole(event.target.value as WorkspaceRole)} className="rounded-md border border-border bg-bg-secondary px-2 text-sm text-text-primary" aria-label="New member role">
+            {workspaceRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+          </select>
           <Button type="submit" variant="secondary" disabled={!rosterReady || searching || mutationPending || !query.trim()}>
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             Search
@@ -200,9 +224,12 @@ export default function WorkspaceSettingsPage() {
                     <p className="truncate text-sm font-medium text-text-primary">{person?.name ?? 'Deleted user'}</p>
                     <p className="truncate text-xs text-text-tertiary">{person?.email ?? 'User no longer exists'}</p>
                   </div>
-                  {member.role === 'owner' && person ? (
-                    <span className="inline-flex items-center gap-1 text-xs text-text-tertiary"><Crown className="h-3.5 w-3.5" /> Owner</span>
-                  ) : (
+                  {person && (
+                    <select value={member.role} onChange={(event) => updateMemberRole(member.id, event.target.value as WorkspaceRole)} disabled={mutationPending} aria-label={`${person.name} role`} className="rounded-md border border-border bg-bg-secondary px-2 py-1 text-xs text-text-primary">
+                      {workspaceRoles.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                    </select>
+                  )}
+                  {(!person || member.role !== 'owner') && (
                     <Button variant="ghost" size="sm" onClick={() => removeMember(member.id)} disabled={mutationPending} className="text-status-error hover:text-status-error">
                       {pendingMemberId === member.id && <Loader2 className="h-4 w-4 animate-spin" />}
                       Remove

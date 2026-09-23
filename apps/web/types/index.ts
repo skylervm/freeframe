@@ -12,6 +12,8 @@ export type TeamRole = "lead" | "member";
 
 export type ProjectRole = "owner" | "editor" | "reviewer" | "viewer";
 
+export type WorkspaceRole = ProjectRole;
+
 export type ProjectType = "personal" | "team";
 
 export type ProjectFolderScope = "personal" | "shared" | "workspace";
@@ -100,7 +102,7 @@ export interface Project {
   asset_count?: number;
   storage_bytes?: number;
   member_count?: number;
-  role?: string | null;
+  role?: ProjectRole | null;
 }
 
 export interface ProjectMember {
@@ -176,6 +178,7 @@ export interface AssetVersion {
 export interface AssetResponse extends Asset {
   latest_version: AssetVersion | null;
   thumbnail_url: string | null;
+  can_comment: boolean;
 }
 
 export interface MediaFile {

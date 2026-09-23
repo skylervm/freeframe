@@ -36,7 +36,7 @@ from ..schemas.comment import (
 from ..services import s3_service
 from ..services import comment_export
 from ..services.permissions import (
-    require_asset_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
+    require_asset_access, require_comment_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
 )
 from ..tasks.email_tasks import send_mention_email, send_comment_email
 from ..tasks.celery_app import send_task_safe
@@ -351,7 +351,7 @@ def create_comment(
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset(db, asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
 
     version = db.query(AssetVersion).filter(
         AssetVersion.id == body.version_id, AssetVersion.asset_id == asset_id,
@@ -413,7 +413,7 @@ def reply_to_comment(
     current_user: User = Depends(get_current_user),
 ):
     asset = _get_asset(db, asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
     parent = db.query(Comment).filter(
         Comment.id == comment_id, Comment.asset_id == asset_id, Comment.deleted_at.is_(None),
     ).first()
@@ -459,7 +459,7 @@ def update_comment(
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
     asset = _get_asset(db, comment.asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
     # Allow comment owner or project owner to edit
     if comment.author_id != current_user.id:
         member = db.query(ProjectMember).filter(
@@ -487,7 +487,7 @@ def delete_comment(
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
     asset = _get_asset(db, comment.asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
     # Allow comment owner or project owner to delete
     if comment.author_id != current_user.id:
         member = db.query(ProjectMember).filter(
@@ -512,7 +512,7 @@ def resolve_comment(
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
     asset = _get_asset(db, comment.asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
     comment.resolved = not comment.resolved
     db.commit()
     db.refresh(comment)
@@ -534,7 +534,7 @@ def create_attachment(
 ):
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
 
     # Sanitize the filename so it cannot break the S3 key or the presigned
     # URL. S3 flattens path separators, so this isn't traversal — but
@@ -596,8 +596,7 @@ def delete_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Must be comment author OR project owner/editor
-    require_asset_access(db, asset, current_user)
-    from ..models.project import ProjectRole
+    require_comment_access(db, asset, current_user)
     from ..services.permissions import get_effective_project_role
     is_comment_author = comment.author_id == current_user.id
     if not is_comment_author:
@@ -626,7 +625,7 @@ def toggle_reaction(
 ):
     comment = _get_comment(db, comment_id)
     asset = _get_asset(db, comment.asset_id)
-    require_asset_access(db, asset, current_user)
+    require_comment_access(db, asset, current_user)
 
     existing = db.query(CommentReaction).filter(
         CommentReaction.comment_id == comment_id,
