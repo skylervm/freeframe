@@ -16,6 +16,7 @@ export class ApiError extends Error {
 
 interface RequestOptions {
   headers?: Record<string, string>
+  unauthenticated?: boolean
 }
 
 async function request<T>(
@@ -29,7 +30,7 @@ async function request<T>(
       'Content-Type': 'application/json',
       ...options?.headers,
     }
-    if (token) {
+    if (token && !options?.unauthenticated) {
       headers['Authorization'] = `Bearer ${token}`
     }
     return headers
@@ -43,11 +44,12 @@ async function request<T>(
     })
   }
 
-  let token = getAccessToken()
+  const unauthenticated = options?.unauthenticated === true
+  let token = unauthenticated ? null : getAccessToken()
   let response = await execute(token)
 
   // On 401, attempt a token refresh and retry once
-  if (response.status === 401) {
+  if (!unauthenticated && response.status === 401) {
     const newToken = await refreshAccessToken()
     if (newToken) {
       response = await execute(newToken)

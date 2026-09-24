@@ -150,3 +150,47 @@
     text-wrap: balance;
   }
 }
+
+/* ─── Phone landscape review workspace ─────────────────────────────────────
+   Scoped to the review surface only. Width alone cannot decide this: a phone
+   in landscape is physically wide but still needs the compact review chrome,
+   so the mobile stack must be turned into two columns by orientation.
+   The two-class selectors outrank the Tailwind utilities they override
+   regardless of source order; `md:` variants never apply below 768px. */
+@media (max-width: 767px) and (orientation: landscape) {
+  .review-workspace {
+    flex-direction: row;
+  }
+
+  /* Left column: media fills the available height instead of a portrait-sized box */
+  .review-workspace .review-viewer {
+    flex: 1 1 0%;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .review-workspace .review-player {
+    flex: 1 1 0%;
+    height: auto;
+    min-height: 0;
+  }
+
+  .review-workspace .review-video-area {
+    aspect-ratio: auto;
+    flex: 1 1 0%;
+    min-height: 0;
+    /* The portrait cap resolves to ~150px in landscape, which would collapse
+       the media column. Landscape sizes from the row instead. */
+    max-height: none;
+  }
+
+  /* Right column: Comments / Fields beside the media, not below it */
+  .review-workspace #review-comments {
+    width: min(45%, 20rem);
+    flex: none;
+    border-top-width: 0;
+    border-left-width: 1px;
+  }
+}

@@ -15,7 +15,7 @@ from ..models.activity import Mention, Notification
 from ..models.comment import Comment
 from ..schemas.asset import AssetResponse, NotificationResponse
 from ..routers.assets import _build_asset_response, _build_asset_responses_bulk
-from ..services.permissions import get_accessible_project_roles
+from ..services.permissions import get_accessible_project_roles, get_asset_comment_capabilities
 from ..services.search import escape_like
 
 router = APIRouter(prefix="/me", tags=["me"])
@@ -107,7 +107,7 @@ def list_my_assets(
         query = query.filter(Asset.name.ilike(f"%{escape_like(q.strip())}%"))
 
     assets = query.order_by(Asset.created_at.desc()).offset(skip).limit(limit).all()
-    return _build_asset_responses_bulk(assets, db)
+    return _build_asset_responses_bulk(assets, db, can_comment=get_asset_comment_capabilities(db, assets, current_user))
 
 
 @router.get("/folders")

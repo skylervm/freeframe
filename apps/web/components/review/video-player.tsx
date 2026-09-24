@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   Maximize,
   Minimize,
@@ -10,6 +11,7 @@ import {
   VolumeX,
   ChevronUp,
   Check,
+  MoreHorizontal,
   Repeat,
 } from "lucide-react";
 import { cn, formatTime, formatTimecode, formatFrames } from "@/lib/utils";
@@ -34,6 +36,14 @@ interface VideoPlayerProps {
   className?: string;
   /** Pre-fetched stream URL (for share mode — skips authenticated API call) */
   initialStreamUrl?: string | null;
+  /**
+   * Phone portrait: size the video area to the source's own aspect ratio
+   * instead of filling the column, so there is no letterbox padding above and
+   * below. Capped so a tall clip cannot crowd out the comments pane.
+   * Ignored in fullscreen and on md+, and overridden in phone landscape by
+   * the `.review-workspace` orientation rule in globals.css.
+   */
+  compact?: boolean;
 }
 
 // ─── Video frame constraint ──────────────────────────────────────────────────
@@ -127,10 +137,12 @@ export function VideoPlayer({
   overlay,
   className,
   initialStreamUrl,
+  compact = false,
 }: VideoPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [streamUrl, setStreamUrl] = useState<string | null>(null);
   const [loop, setLoop] = useState(false);
+  const [transportMoreOpen, setTransportMoreOpen] = useState(false);
 
   const { isDrawingMode, timeFormat, setTimeFormat, setPlayheadTime, currentVersion } =
     useReviewStore();
@@ -231,6 +243,41 @@ export function VideoPlayer({
     toggleFullscreen,
   } = player;
 
+  // Intrinsic aspect ratio of the loaded video, used to size the compact
+  // (phone-portrait) box. Null until metadata arrives; the render falls back to
+  // 16:9 so the box does not jump for the common case.
+  const [intrinsicRatio, setIntrinsicRatio] = useState<number | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const readRatio = () => {
+      const { videoWidth, videoHeight } = video;
+      if (videoWidth > 0 && videoHeight > 0) {
+        setIntrinsicRatio(videoWidth / videoHeight);
+      }
+    };
+    // A new source must not keep the previous version's shape. `videoWidth`
+    // holds its old value until fresh metadata arrives, so clear the state and
+    // only re-read synchronously when this element already has metadata.
+    const clearRatio = () => setIntrinsicRatio(null);
+
+    clearRatio();
+    if (video.readyState >= 1 /* HAVE_METADATA */) readRatio();
+
+    video.addEventListener("loadedmetadata", readRatio);
+    // HLS quality switches fire `resize` without a fresh `loadedmetadata`.
+    video.addEventListener("resize", readRatio);
+    // Source teardown, e.g. switching asset versions.
+    video.addEventListener("emptied", clearRatio);
+    return () => {
+      video.removeEventListener("loadedmetadata", readRatio);
+      video.removeEventListener("resize", readRatio);
+      video.removeEventListener("emptied", clearRatio);
+    };
+  }, [videoRef, streamUrl]);
+
   // Register pause handler with review provider
   useEffect(() => {
     registerPauseHandler(pause);
@@ -313,14 +360,31 @@ export function VideoPlayer({
     <div
       ref={containerRef}
       className={cn(
-        "flex flex-col h-full w-full",
+        "review-player flex flex-col w-full",
+        compact && !isFullscreen ? "h-auto md:h-full" : "h-full",
         isFullscreen && "fixed inset-0 z-50",
         className,
       )}
     >
-      {/* Video area — fills available space, object-contain preserves aspect ratio with letterbox */}
+      {/* Video area — object-contain preserves aspect ratio. Fills available
+          space by default; in compact (phone portrait) mode it takes the
+          source's own aspect ratio so no letterbox bars are added, bounded by
+          the same cap the image/audio column uses so a tall clip still leaves
+          room for the comments pane. */}
       <div
-        className="flex-1 relative min-h-0 bg-black overflow-hidden cursor-pointer"
+        className={cn(
+          "review-video-area relative bg-black overflow-hidden cursor-pointer",
+          compact && !isFullscreen
+            ? "aspect-[var(--review-aspect,1.7778)] max-h-[min(56svh,28rem,calc(100svh-15rem))] w-full shrink-0 md:aspect-auto md:max-h-none md:flex-1 md:min-h-0"
+            : "flex-1 min-h-0",
+        )}
+        style={
+          /* A custom property, not an inline `aspect-ratio`: an inline value
+             would also win on md+, where `md:aspect-auto` must take over. */
+          compact && !isFullscreen
+            ? ({ "--review-aspect": String(intrinsicRatio ?? 16 / 9) } as React.CSSProperties)
+            : undefined
+        }
         onClick={handleContainerClick}
       >
         <video
@@ -368,9 +432,9 @@ export function VideoPlayer({
       </div>
 
       {/* Bottom transport bar (matches audio player style) */}
-      <div className="flex items-center justify-between h-12 px-4 bg-bg-secondary/80 border-t border-border shrink-0">
+      <div className="flex h-12 items-center justify-between border-t border-border bg-bg-secondary/80 px-2 shrink-0 md:px-4">
         {/* Left: Play, Loop, Speed, Volume */}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 md:gap-2">
           <button
             onClick={togglePlay}
             className="flex h-7 w-7 items-center justify-center rounded text-text-primary hover:bg-bg-hover transition-colors"
@@ -386,7 +450,7 @@ export function VideoPlayer({
           <button
             onClick={() => setLoop((p) => !p)}
             className={cn(
-              "flex h-7 w-7 items-center justify-center rounded transition-colors",
+              "hidden h-7 w-7 items-center justify-center rounded transition-colors lg:flex",
               loop
                 ? "text-accent bg-accent/10"
                 : "text-text-tertiary hover:text-text-secondary hover:bg-bg-hover",
@@ -398,7 +462,7 @@ export function VideoPlayer({
 
           <button
             onClick={handleSpeedCycle}
-            className="flex h-7 items-center justify-center rounded px-1.5 text-xs font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors tabular-nums"
+            className="hidden h-7 items-center justify-center rounded px-1.5 text-xs font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary transition-colors tabular-nums lg:flex"
             aria-label="Playback speed"
           >
             {playbackRate}x
@@ -418,12 +482,13 @@ export function VideoPlayer({
         </div>
 
         {/* Center: Timecode display with format picker */}
-        <div className="relative" ref={timeFormatRef}>
+        <div className="relative flex min-w-0 flex-1 justify-center px-1 lg:flex-none lg:px-0" ref={timeFormatRef}>
           <button
             onClick={() => setTimeFormatOpen((p) => !p)}
-            className="flex items-center gap-1.5 rounded-md bg-bg-tertiary px-3 py-1 hover:bg-bg-hover transition-colors"
+            aria-label="Time format"
+            className="flex max-w-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md bg-bg-tertiary px-3 py-1 transition-colors hover:bg-bg-hover"
           >
-            <span className="font-mono text-sm text-text-primary tabular-nums tracking-wide">
+            <span className="min-w-0 max-w-[9rem] flex-1 truncate font-mono text-sm text-text-primary tabular-nums tracking-wide lg:max-w-none lg:flex-none">
               {timeFormat === "timecode" ? (
                 displayTime(currentTime)
               ) : (
@@ -436,7 +501,7 @@ export function VideoPlayer({
             </span>
             <ChevronUp
               className={cn(
-                "h-3 w-3 text-text-tertiary transition-transform",
+                "h-3 w-3 shrink-0 text-text-tertiary transition-transform",
                 timeFormatOpen && "rotate-180",
               )}
             />
@@ -477,13 +542,13 @@ export function VideoPlayer({
         </div>
 
         {/* Right: Quality, Fullscreen */}
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1 md:gap-2">
           {/* Quality selector */}
           {qualityLevels.length > 0 && (
             <select
               value={currentQuality}
               onChange={(e) => setQuality(parseInt(e.target.value, 10))}
-              className="bg-transparent text-text-secondary text-xs border border-border rounded px-1.5 py-1 cursor-pointer shrink-0 hover:text-text-primary transition-colors"
+              className="hidden shrink-0 cursor-pointer rounded border border-border bg-transparent px-1.5 py-1 text-xs text-text-secondary transition-colors hover:text-text-primary lg:block"
               aria-label="Quality"
             >
               <option value={-1} className="bg-bg-secondary">
@@ -500,6 +565,62 @@ export function VideoPlayer({
               ))}
             </select>
           )}
+
+          <DropdownMenu.Root open={transportMoreOpen} onOpenChange={setTransportMoreOpen}>
+            <DropdownMenu.Trigger asChild>
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded text-text-tertiary transition-colors hover:bg-bg-hover hover:text-text-primary lg:hidden"
+                aria-label="More playback controls"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                side="top"
+                sideOffset={8}
+                className="z-50 w-40 rounded-lg border border-border bg-bg-elevated p-1 shadow-xl lg:hidden"
+              >
+                <DropdownMenu.Item
+                  onSelect={() => setLoop((value) => !value)}
+                  className={cn(
+                    'flex cursor-pointer items-center justify-between rounded-md px-2.5 py-2 text-sm outline-none transition-colors hover:bg-bg-hover data-[highlighted]:bg-bg-hover',
+                    loop ? 'text-accent' : 'text-text-secondary',
+                  )}
+                >
+                  Loop
+                  {loop && <Check className="h-3.5 w-3.5" />}
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={handleSpeedCycle}
+                  className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover data-[highlighted]:bg-bg-hover"
+                >
+                  Playback speed
+                  <span className="tabular-nums">{playbackRate}x</span>
+                </DropdownMenu.Item>
+                {qualityLevels.length > 0 && (
+                  <DropdownMenu.Sub>
+                    <DropdownMenu.SubTrigger className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover data-[highlighted]:bg-bg-hover">
+                      Quality
+                      <span className="text-xs">{currentQuality === -1 ? 'Auto' : qualityLevels.find((level) => level.index === currentQuality)?.label}</span>
+                    </DropdownMenu.SubTrigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.SubContent className="z-50 min-w-[100px] rounded-lg border border-border bg-bg-elevated p-1 shadow-xl">
+                        <DropdownMenu.RadioGroup value={String(currentQuality)} onValueChange={(value) => setQuality(parseInt(value, 10))}>
+                          <DropdownMenu.RadioItem value="-1" className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-2 text-sm text-text-secondary outline-none hover:bg-bg-hover data-[highlighted]:bg-bg-hover">Auto</DropdownMenu.RadioItem>
+                          {qualityLevels.map((level) => (
+                            <DropdownMenu.RadioItem key={level.index} value={String(level.index)} className="flex cursor-pointer items-center justify-between rounded-md px-2.5 py-2 text-sm text-text-secondary outline-none hover:bg-bg-hover data-[highlighted]:bg-bg-hover">{level.label}</DropdownMenu.RadioItem>
+                          ))}
+                        </DropdownMenu.RadioGroup>
+                      </DropdownMenu.SubContent>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Sub>
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
 
           {/* Fullscreen */}
           <button

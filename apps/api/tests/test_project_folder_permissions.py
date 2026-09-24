@@ -12,6 +12,7 @@ from apps.api.models.share import AssetShare, SharePermission
 from apps.api.models.user import User
 from apps.api.models.workspace import Workspace, WorkspaceMember, WorkspaceRole
 from apps.api.routers.share import _may_view_share_secret
+from apps.api.routers.project_folders import _folder_role
 from apps.api.services.permissions import (
     can_access_asset,
     get_accessible_project_roles,
@@ -169,7 +170,7 @@ def test_workspace_access_stops_at_private_child_until_explicitly_shared(real_db
     real_db.add(WorkspaceMember(
         workspace_id=workspace.id,
         user_id=workspace_member.id,
-        role=WorkspaceRole.member,
+        role=WorkspaceRole.viewer,
     ))
     workspace_root = _folder(real_db, workspace, owner)
     workspace_root.scope = ProjectFolderScope.workspace
@@ -195,6 +196,66 @@ def test_workspace_access_stops_at_private_child_until_explicitly_shared(real_db
     ))
     real_db.flush()
     assert get_effective_project_role(real_db, project.id, workspace_member) == ProjectRole.viewer
+
+
+def test_workspace_role_is_inherited_by_workspace_projects(real_db):
+    owner = _user(real_db)
+    reviewer = _user(real_db)
+    workspace = Workspace(name=f"folder-test-{uuid.uuid4()}")
+    real_db.add(workspace)
+    real_db.flush()
+    real_db.add(WorkspaceMember(
+        workspace_id=workspace.id,
+        user_id=reviewer.id,
+        role=WorkspaceRole.reviewer,
+    ))
+    folder = _folder(real_db, workspace, owner)
+    folder.scope = ProjectFolderScope.workspace
+    project = Project(
+        name="workspace reviewer project",
+        project_type=ProjectType.personal,
+        created_by=owner.id,
+        project_folder_id=folder.id,
+    )
+    real_db.add(project)
+    real_db.flush()
+
+    assert get_effective_project_role(real_db, project.id, reviewer) == ProjectRole.reviewer
+
+
+def test_workspace_role_outranks_lower_folder_share(real_db):
+    owner = _user(real_db)
+    editor = _user(real_db)
+    workspace = Workspace(name=f"folder-test-{uuid.uuid4()}")
+    real_db.add(workspace)
+    real_db.flush()
+    real_db.add(WorkspaceMember(
+        workspace_id=workspace.id,
+        user_id=editor.id,
+        role=WorkspaceRole.editor,
+    ))
+    folder = _folder(real_db, workspace, owner)
+    folder.scope = ProjectFolderScope.workspace
+    project = Project(
+        name="workspace editor project",
+        project_type=ProjectType.personal,
+        created_by=owner.id,
+        project_folder_id=folder.id,
+    )
+    real_db.add_all([
+        project,
+        ProjectFolderShare(
+            folder_id=folder.id,
+            user_id=editor.id,
+            role=ProjectRole.viewer,
+            shared_by=owner.id,
+        ),
+    ])
+    real_db.flush()
+
+    assert _folder_role(real_db, folder, editor) == ProjectRole.editor
+    assert get_effective_project_role(real_db, project.id, editor) == ProjectRole.editor
+    assert get_accessible_project_roles(real_db, editor)[project.id] == ProjectRole.editor
 
 
 def test_last_active_workspace_owner_cannot_be_removed(real_db):

@@ -527,6 +527,48 @@ def list_comments(
     ]
 
 
+@router.get("/assets/{asset_id}/review-comments")
+def list_review_comments(
+    asset_id: uuid.UUID,
+    version_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    """Return all review comments for an in-scope asset version.
+
+    This is separate from ``/comments``, whose compact clip-marker contract is
+    consumed by edit automation.
+    """
+    _asset_in_scope(db, asset_id, actor)
+    version = db.query(AssetVersion).filter(
+        AssetVersion.id == version_id,
+        AssetVersion.asset_id == asset_id,
+        AssetVersion.deleted_at.is_(None),
+    ).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    comments = db.query(Comment).filter(
+        Comment.asset_id == asset_id,
+        Comment.version_id == version_id,
+        Comment.deleted_at.is_(None),
+    ).order_by(Comment.created_at).all()
+    return [
+        {
+            "id": comment.id,
+            "parent_id": comment.parent_id,
+            "asset_id": comment.asset_id,
+            "version_id": comment.version_id,
+            "body": comment.body,
+            "timecode_start": comment.timecode_start,
+            "timecode_end": comment.timecode_end,
+            "resolved": comment.resolved,
+            "visibility": comment.visibility,
+            "created_at": comment.created_at,
+        }
+        for comment in comments
+    ]
+
+
 @router.get("/assets/{asset_id}/review-version")
 def get_review_version(
     asset_id: uuid.UUID,

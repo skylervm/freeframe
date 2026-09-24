@@ -14,17 +14,22 @@ const sortOptions: { value: SortKey; label: string }[] = [
   { value: 'type', label: 'Type' },
 ]
 
-export function SortPopover() {
+export function SortPopover({ compact = false }: { compact?: boolean }) {
   const { sortKey, setSortKey, sortDirection, toggleSortDirection } = useViewStore()
   const activeLabel = sortOptions.find((o) => o.value === sortKey)?.label ?? 'Custom'
 
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-white/5 transition-colors">
+        <button
+          aria-label={compact ? 'Sort assets' : undefined}
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary"
+        >
           <ArrowUpDown className="h-4 w-4" />
-          <span>Sorted by</span>
-          <span className="text-text-primary font-medium">{activeLabel}</span>
+          {!compact && <>
+            <span>Sorted by</span>
+            <span className="text-text-primary font-medium">{activeLabel}</span>
+          </>}
         </button>
       </Popover.Trigger>
 

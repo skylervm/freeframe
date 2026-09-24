@@ -43,7 +43,7 @@ def test_list_project_folders_keeps_directly_shared_child_visible(real_db):
     real_db.flush()
     real_db.add_all([
         WorkspaceMember(workspace_id=workspace.id, user_id=owner.id, role=WorkspaceRole.owner),
-        WorkspaceMember(workspace_id=workspace.id, user_id=viewer.id, role=WorkspaceRole.member),
+        WorkspaceMember(workspace_id=workspace.id, user_id=viewer.id, role=WorkspaceRole.viewer),
     ])
     parent = ProjectFolder(
         workspace_id=workspace.id,

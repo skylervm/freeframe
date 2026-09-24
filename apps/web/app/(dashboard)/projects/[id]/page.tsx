@@ -53,6 +53,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePageTitle } from "@/hooks/use-page-title";
 import type {
   Project,
+  ProjectRole,
   AssetResponse,
   ProjectMember,
   User,
@@ -288,14 +289,16 @@ export default function ProjectDetailPage() {
 
   // ─── Role-based permissions ───────────────────────────────────────────────
   const currentMember = members?.find((m) => m.user_id === user?.id);
-  const currentRole = currentMember?.role ?? "viewer";
-  // owner → Full Access, editor → Edit & Share, reviewer → Comment Only, viewer → View Only
+  const currentRole: ProjectRole = project?.role ?? currentMember?.role ?? "viewer";
+  // Workspace roles control content operations. Project sharing and membership
+  // remain direct-project-owner responsibilities.
   const canUpload = currentRole === "owner" || currentRole === "editor";
   const canCreateFolder = currentRole === "owner" || currentRole === "editor";
-  const canShare = currentRole === "owner" || currentRole === "editor";
-  const canManageMembers = currentRole === "owner";
-  const canSeeShareLinks = currentRole === "owner" || currentRole === "editor";
+  const canShare = currentMember?.role === "owner" || currentMember?.role === "editor";
+  const canManageMembers = currentMember?.role === "owner";
+  const canSeeShareLinks = canShare;
   const canComment = currentRole !== "viewer";
+  const selectedAssetCanComment = selectedAsset?.can_comment ?? canComment;
 
   async function saveDropboxUrl() {
     await api.patch(`/projects/${projectId}`, { dropbox_url: dropboxUrl.trim() });
@@ -869,19 +872,22 @@ export default function ProjectDetailPage() {
                   } catch {}
                 }
               }}
-              actions={
-                <>
-                  {canManageMembers && (
+              actions={[
+                  canManageMembers && (
                     <Button
+                      key="members"
                       variant="secondary"
                       size="sm"
                       onClick={() => setMembersDialogOpen(true)}
+                      aria-label="Manage project members"
                     >
                       <Users className="h-4 w-4" />
+                      <span className="md:hidden">Members</span>
                     </Button>
-                  )}
-                  {canShare && (
+                  ),
+                  canShare && (
                     <Button
+                      key="share"
                       variant="secondary"
                       size="sm"
                       onClick={() => openShareDialog([], [])}
@@ -889,9 +895,10 @@ export default function ProjectDetailPage() {
                       <Share2 className="h-4 w-4" />
                       Share
                     </Button>
-                  )}
-                  {canCreateFolder && (
+                  ),
+                  canCreateFolder && (
                     <button
+                      key="new-folder"
                       className="flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover text-[13px] transition-colors"
                       onClick={() => {
                         setFolderDialogParentId(currentFolderId);
@@ -901,15 +908,14 @@ export default function ProjectDetailPage() {
                       <FolderPlus className="h-4 w-4" />
                       New Folder
                     </button>
-                  )}
-                  {canUpload && (
-                    <Button size="sm" onClick={() => setUploadOpen(true)}>
+                  ),
+                  canUpload && (
+                    <Button key="upload" size="sm" onClick={() => setUploadOpen(true)}>
                       <Upload className="h-4 w-4" />
                       Upload
                     </Button>
-                  )}
-                </>
-              }
+                  ),
+              ]}
             />
           )}
 
@@ -1034,7 +1040,8 @@ export default function ProjectDetailPage() {
                         onAddReaction={addReaction}
                         onRemoveReaction={removeReaction}
                         onReply={() => {}}
-                        onSubmitReply={async () => {}}
+                        onSubmitReply={selectedAssetCanComment ? async () => {} : undefined}
+                        canComment={selectedAssetCanComment}
                       />
                     ) : (
                       <div className="flex-1 flex items-center justify-center p-6 text-center">

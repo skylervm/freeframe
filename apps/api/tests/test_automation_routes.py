@@ -530,6 +530,37 @@ def test_comment_export_excludes_resolved_instructions():
     assert [item["id"] for item in result] == [open_comment.id]
 
 
+def test_review_comments_include_all_notes_and_replies(monkeypatch):
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    note = MagicMock(
+        id=uuid.uuid4(), parent_id=None, asset_id=asset_id, version_id=version_id,
+        body="Move the title lower", timecode_start=10, timecode_end=None,
+        resolved=False, visibility="project", created_at=None,
+    )
+    reply = MagicMock(
+        id=uuid.uuid4(), parent_id=note.id, asset_id=asset_id, version_id=version_id,
+        body="Will do", timecode_start=None, timecode_end=None,
+        resolved=True, visibility="project", created_at=None,
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.order_by.return_value = db
+    db.first.return_value = MagicMock()
+    db.all.return_value = [note, reply]
+    scope_check = MagicMock()
+    monkeypatch.setattr(automation_module, "_asset_in_scope", scope_check)
+
+    result = automation_module.list_review_comments(asset_id, version_id, db, actor)
+
+    scope_check.assert_called_once_with(db, asset_id, actor)
+    assert [item["id"] for item in result] == [note.id, reply.id]
+    assert result[1]["parent_id"] == note.id
+    assert result[1]["resolved"] is True
+
+
 @pytest.mark.parametrize(
     "body",
     ["CLIP 1: START", "clip 2: end", " Clip 3: start here ", "clip 4: END HERE"],
@@ -552,6 +583,19 @@ def test_comment_export_rejects_a_version_from_another_asset():
 
     with pytest.raises(HTTPException) as error:
         automation_module.list_comments(uuid.uuid4(), uuid.uuid4(), db, actor)
+
+    assert error.value.status_code == 404
+
+
+def test_review_comments_rejects_a_version_from_another_asset():
+    actor = _actor()
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.first.side_effect = [MagicMock(project_id=actor.project_id), None]
+
+    with pytest.raises(HTTPException) as error:
+        automation_module.list_review_comments(uuid.uuid4(), uuid.uuid4(), db, actor)
 
     assert error.value.status_code == 404
 

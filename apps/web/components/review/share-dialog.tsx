@@ -567,6 +567,11 @@ interface ShareDialogProps {
   assetName?: string;
   projectId?: string;
   asset?: AssetResponse | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
+  hideTrigger?: boolean;
+  mobileDialog?: boolean;
 }
 
 export function ShareDialog({
@@ -574,8 +579,18 @@ export function ShareDialog({
   assetName,
   projectId,
   asset,
+  open,
+  onOpenChange,
+  onCloseAutoFocus,
+  hideTrigger = false,
+  mobileDialog = false,
 }: ShareDialogProps) {
-  const [dropdownOpen, setDropdownOpen] = React.useState(false);
+  const [uncontrolledDropdownOpen, setUncontrolledDropdownOpen] = React.useState(false);
+  const dropdownOpen = open ?? uncontrolledDropdownOpen;
+  const setDropdownOpen = React.useCallback((next: boolean) => {
+    if (open === undefined) setUncontrolledDropdownOpen(next);
+    onOpenChange?.(next);
+  }, [onOpenChange, open]);
   const [search, setSearch] = React.useState("");
   const [addingToToken, setAddingToToken] = React.useState<string | null>(null);
   const [addedToToken, setAddedToToken] = React.useState<string | null>(null);
@@ -600,7 +615,7 @@ export function ShareDialog({
 
   // Close dropdown on outside click
   React.useEffect(() => {
-    if (!dropdownOpen) return;
+    if (mobileDialog || !dropdownOpen) return;
     function handleClick(e: MouseEvent) {
       if (
         dropdownRef.current &&
@@ -611,17 +626,17 @@ export function ShareDialog({
     }
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [dropdownOpen]);
+  }, [dropdownOpen, mobileDialog, setDropdownOpen]);
 
   // Close dropdown on Escape
   React.useEffect(() => {
-    if (!dropdownOpen) return;
+    if (mobileDialog || !dropdownOpen) return;
     function handleKey(e: KeyboardEvent) {
       if (e.key === "Escape") setDropdownOpen(false);
     }
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [dropdownOpen]);
+  }, [dropdownOpen, mobileDialog, setDropdownOpen]);
 
   const filteredLinks = React.useMemo(() => {
     if (!search.trim()) return shareLinks;
@@ -656,29 +671,33 @@ export function ShareDialog({
     setCreateDialogOpen(true);
   }
 
-  return (
-    <>
+  const shareControl = (
       <div className="relative" ref={dropdownRef}>
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => setDropdownOpen(!dropdownOpen)}
-          className={cn(
-            dropdownOpen && "bg-bg-hover",
-          )}
-        >
-          <Share2 className="h-4 w-4" />
-          Share
-        </Button>
+        {!hideTrigger && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            className={cn(
+              dropdownOpen && "bg-bg-hover",
+            )}
+          >
+            <Share2 className="h-4 w-4" />
+            Share
+          </Button>
+        )}
 
         {dropdownOpen && (
           <div
             className={cn(
-              "absolute right-0 top-full mt-1.5 z-50 w-80",
+              mobileDialog
+                ? "fixed inset-x-3 top-16 z-[150] mx-auto w-auto max-w-sm"
+                : "absolute right-0 top-full mt-1.5 z-50 w-80",
               "rounded-xl border border-border bg-bg-elevated shadow-xl",
               "animate-in fade-in-0 zoom-in-95 duration-150",
             )}
           >
+            {mobileDialog && <Dialog.Title className="sr-only">Share asset</Dialog.Title>}
             {/* New Share Link button */}
             <div className="p-2">
               <button
@@ -773,6 +792,20 @@ export function ShareDialog({
           </div>
         )}
       </div>
+  );
+
+  return (
+    <>
+      {mobileDialog ? (
+        <Dialog.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-[140] bg-black/45" />
+            <Dialog.Content asChild onCloseAutoFocus={onCloseAutoFocus}>
+              {shareControl}
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      ) : shareControl}
 
       {/* ShareCreateDialog for new link */}
       {projectId && (

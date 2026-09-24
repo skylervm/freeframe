@@ -31,12 +31,17 @@ import {
 import { cn, formatTime, formatRelativeTime } from "@/lib/utils";
 import { useReviewStore } from "@/stores/review-store";
 import type { CommentWithReplies } from "@/hooks/use-comments";
-import {
-  exportComments,
-  FpsRequiredError,
-  type ExportFormat,
-} from "@/lib/export-comments";
+import type { ExportFormat } from "@/lib/export-comments";
+import { useCommentView, type CommentView } from "./comment-view";
 import { FpsPromptDialog } from "@/components/review/fps-prompt-dialog";
+
+export { useCommentView } from "./comment-view";
+export type {
+  CommentView,
+  CommentVisibility,
+  FilterState,
+  SortMode,
+} from "./comment-view";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -50,12 +55,20 @@ interface CommentPanelProps {
   onRemoveReaction: (commentId: string, emoji: string) => Promise<void>;
   onReply: (parentId: string) => void;
   onSubmitReply?: (parentId: string, body: string) => Promise<void>;
+  canComment?: boolean;
   /** Compare mode: route comment-timecode clicks to a pane-scoped transport instead of the global store. */
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   /** Compare mode: route annotation display to a pane-scoped overlay instead of the global store. */
   onShowAnnotation?: (drawingData: Record<string, unknown> | null) => void;
   /** Compare mode: export this pane's version instead of the store's currentVersion. */
   exportVersionId?: string;
+  /**
+   * Toolbar state owned by the caller, so another surface (the phone review
+   * header's More menu) can drive the same view. Omit to keep it local.
+   */
+  view?: CommentView;
+  /** Phones: hide the inline toolbar below md, because its controls live elsewhere. */
+  compactToolbar?: boolean;
   className?: string;
 }
 
@@ -368,6 +381,7 @@ interface CommentItemProps {
   onReply: (parentId: string) => void;
   onCancelReply: () => void;
   onSubmitReply?: (parentId: string, body: string) => Promise<void>;
+  canComment: boolean;
   onSeekToTimecode?: (time: number, pause?: boolean) => void;
   onShowAnnotation?: (drawingData: Record<string, unknown> | null) => void;
 }
@@ -386,6 +400,7 @@ function CommentItem({
   onReply,
   onCancelReply,
   onSubmitReply,
+  canComment,
   onSeekToTimecode,
   onShowAnnotation,
 }: CommentItemProps) {
@@ -609,6 +624,7 @@ function CommentItem({
                       ? "border-accent/40 bg-accent/10 text-accent"
                       : "border-border bg-bg-tertiary text-text-secondary hover:border-white/20",
                   )}
+                  disabled={!canComment}
                   onClick={() => handleReactionClick(r.emoji, r.userReacted)}
                 >
                   {r.emoji}
@@ -619,8 +635,8 @@ function CommentItem({
           )}
 
           {/* Action row: Reply text + hover icons */}
-          <div className="mt-1.5 flex items-center gap-2">
-            {depth === 0 && (
+          {canComment && <div className="mt-1.5 flex items-center gap-2">
+            {depth === 0 && onSubmitReply && (
               <button
                 className="text-[13px] font-medium text-text-tertiary hover:text-text-secondary transition-colors"
                 onClick={() => onReply(comment.id)}
@@ -686,10 +702,10 @@ function CommentItem({
                 </button>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Inline reply input */}
-          {isReplyingHere && onSubmitReply && (
+          {isReplyingHere && canComment && onSubmitReply && (
             <InlineReplyInput
               parentId={comment.id}
               onSubmit={onSubmitReply}
@@ -730,6 +746,7 @@ function CommentItem({
                   onReply={onReply}
                   onCancelReply={onCancelReply}
                   onSubmitReply={onSubmitReply}
+                  canComment={canComment}
                   onSeekToTimecode={onSeekToTimecode}
                   onShowAnnotation={onShowAnnotation}
                 />
@@ -741,29 +758,6 @@ function CommentItem({
     </div>
   );
 }
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type CommentVisibility = "all" | "public" | "internal";
-type SortMode = "timecode" | "oldest" | "newest" | "commenter" | "completed";
-
-interface FilterState {
-  annotations: boolean;
-  attachments: boolean;
-  completed: boolean;
-  incomplete: boolean;
-  unread: boolean;
-  mentionsReactions: boolean;
-}
-
-const EMPTY_FILTERS: FilterState = {
-  annotations: false,
-  attachments: false,
-  completed: false,
-  incomplete: false,
-  unread: false,
-  mentionsReactions: false,
-};
 
 // ─── Comment panel ────────────────────────────────────────────────────────────
 
@@ -777,30 +771,44 @@ export function CommentPanel({
   onRemoveReaction,
   onReply,
   onSubmitReply,
+  canComment = true,
   onSeekToTimecode,
   onShowAnnotation,
   exportVersionId,
+  view: externalView,
+  compactToolbar = false,
   className,
 }: CommentPanelProps) {
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId);
   const setFocusedCommentId = useReviewStore((s) => s.setFocusedCommentId);
   const setActiveAnnotation = useReviewStore((s) => s.setActiveAnnotation);
   const currentAsset = useReviewStore((s) => s.currentAsset);
-  const currentVersion = useReviewStore((s) => s.currentVersion);
 
-  // Toolbar state
-  const [visibility, setVisibility] = React.useState<CommentVisibility>("all");
+  // View state: the caller's when given, otherwise private to this panel.
+  const localView = useCommentView(exportVersionId);
+  const view = externalView ?? localView;
+  const {
+    visibility,
+    setVisibility,
+    sortMode,
+    setSortMode,
+    filters,
+    toggleFilter,
+    clearFilters,
+    searchOpen,
+    setSearchOpen,
+    searchQuery,
+    setSearchQuery,
+    fpsPromptFormat,
+    setFpsPromptFormat,
+  } = view;
+
+  // Which inline dropdown is open — local to this toolbar.
   const [visOpen, setVisOpen] = React.useState(false);
   const [filterOpen, setFilterOpen] = React.useState(false);
   const [sortOpen, setSortOpen] = React.useState(false);
-  const [searchOpen, setSearchOpen] = React.useState(false);
-  const [searchQuery, setSearchQuery] = React.useState("");
-  const [sortMode, setSortMode] = React.useState<SortMode>("timecode");
-  const [filters, setFilters] = React.useState<FilterState>(EMPTY_FILTERS);
   const [replyingTo, setReplyingTo] = React.useState<string | null>(null);
   const [exportOpen, setExportOpen] = React.useState(false);
-  const [fpsPromptFormat, setFpsPromptFormat] =
-    React.useState<ExportFormat | null>(null);
 
   const searchRef = React.useRef<HTMLInputElement>(null);
 
@@ -808,7 +816,8 @@ export function CommentPanel({
     if (searchOpen) searchRef.current?.focus();
   }, [searchOpen]);
 
-  const hasActiveFilters = Object.values(filters).some(Boolean);
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const hasActiveFilters = activeFilterCount > 0;
 
   // ─── Computed list ──────────────────────────────────────────────────
 
@@ -896,10 +905,6 @@ export function CommentPanel({
         ? "Public comments"
         : "Internal comments";
 
-  function toggleFilter(key: keyof FilterState) {
-    setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
-
   function handleReply(parentId: string) {
     setReplyingTo(parentId);
     onReply(parentId);
@@ -907,29 +912,19 @@ export function CommentPanel({
 
   async function handleExport(format: ExportFormat, fps?: number) {
     setExportOpen(false);
-    const versionId = exportVersionId ?? currentVersion?.id;
-    if (!currentAsset || !versionId) return;
-    try {
-      await exportComments({
-        assetId: currentAsset.id,
-        versionId,
-        format,
-        fps,
-      });
-    } catch (err) {
-      if (err instanceof FpsRequiredError) {
-        setFpsPromptFormat(format);
-      } else {
-        console.error(err);
-      }
-    }
+    await view.exportAs(format, fps);
   }
 
   return (
     <>
     <div className={cn("flex flex-col flex-1 min-h-0", className)}>
       {/* ─── Toolbar ──────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-2.5 shrink-0">
+      <div
+        className={cn(
+          "flex items-center justify-between px-4 py-2.5 shrink-0",
+          compactToolbar && "hidden md:flex",
+        )}
+      >
         {/* Visibility dropdown */}
         <div className="relative">
           <button
@@ -1088,7 +1083,7 @@ export function CommentPanel({
                 <div className="border-t border-border mt-1 pt-1 px-1.5 pb-1">
                   <button
                     className="w-full py-1.5 text-[13px] text-text-secondary bg-bg-tertiary hover:bg-bg-hover rounded-lg transition-colors font-medium"
-                    onClick={() => setFilters(EMPTY_FILTERS)}
+                    onClick={clearFilters}
                   >
                     Clear Filters
                   </button>
@@ -1265,6 +1260,32 @@ export function CommentPanel({
         </div>
       )}
 
+      {/* ─── Active view (phones) ──────────────────────────────────── */}
+      {/* With the toolbar hidden, this is the only sign the list is narrowed. */}
+      {compactToolbar && (visibility !== "all" || hasActiveFilters) && (
+        <div className="flex items-center justify-between gap-2 px-4 py-1.5 shrink-0 text-[12px] text-text-secondary md:hidden">
+          <span className="truncate">
+            {[
+              visibility !== "all" ? visLabel : null,
+              hasActiveFilters
+                ? `${activeFilterCount} ${activeFilterCount === 1 ? "filter" : "filters"}`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+          <button
+            className="shrink-0 font-medium text-accent"
+            onClick={() => {
+              setVisibility("all");
+              clearFilters();
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       {/* ─── Comment list ─────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
         {isLoading && (
@@ -1303,6 +1324,7 @@ export function CommentPanel({
                 onReply={handleReply}
                 onCancelReply={() => setReplyingTo(null)}
                 onSubmitReply={onSubmitReply}
+                canComment={canComment}
                 onSeekToTimecode={onSeekToTimecode}
                 onShowAnnotation={onShowAnnotation}
               />

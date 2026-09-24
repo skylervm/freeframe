@@ -9,8 +9,9 @@ import { AudioPlayer } from '@/components/review/audio-player'
 import { ImageViewer } from '@/components/review/image-viewer'
 import { AnnotationCanvas } from '@/components/review/annotation-canvas'
 import { AnnotationOverlay } from '@/components/review/annotation-overlay'
-import { CommentPanel } from '@/components/review/comment-panel'
+import { CommentPanel, useCommentView } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
+import { MobileCommentMenuItems } from '@/components/review/mobile-comment-menu'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -19,10 +20,13 @@ import { useReviewStore } from '@/stores/review-store'
 import { useAuthStore } from '@/stores/auth-store'
 import { useComments } from '@/hooks/use-comments'
 import { useSSE } from '@/hooks/use-sse'
+import { useCommentsTabOnPhone } from '@/hooks/use-comments-tab-on-phone'
 import { api } from '@/lib/api'
 import { useUploadStore } from '@/stores/upload-store'
 import { useBreadcrumbStore } from '@/stores/breadcrumb-store'
+import { useMobileNavigation } from '@/components/layout/mobile-navigation-context'
 import { canCompare } from '@/lib/compare-time'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -32,11 +36,15 @@ import {
   Columns2,
   Upload,
   GitCompareArrows,
+  Menu,
+  MessageSquare,
+  MoreHorizontal,
+  Share2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
 import { usePageTitle } from '@/hooks/use-page-title'
-import type { Project, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
+import type { Project, ProjectRole, AssetResponse, ProjectMember, FolderTreeNode } from '@/types'
 
 const acceptByType: Record<string, string> = {
   video: 'video/*',
@@ -50,16 +58,32 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const { asset, versions, isLoading, refetchComments, refetchVersions } = useReview()
-  const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
+  const { currentVersion, isDrawingMode, focusedCommentId, seekTo, setCurrentVersion, setFocusedCommentId, setActiveAnnotation } = useReviewStore()
   const { user } = useAuthStore()
   const startVersionUpload = useUploadStore((s) => s.startVersionUpload)
   const versionFileInputRef = useRef<HTMLInputElement>(null)
+  const mobileMoreActionsRef = useRef<HTMLButtonElement>(null)
   const setExtraCrumbs = useBreadcrumbStore((s) => s.setExtraCrumbs)
   const setLabel = useBreadcrumbStore((s) => s.setLabel)
+  const { isOpen: mobileNavigationOpen, toggle: toggleMobileNavigation } = useMobileNavigation()
   usePageTitle(asset?.name ?? null)
   const [annotationData, setAnnotationData] = useState<Record<string, unknown> | null>(null)
   const [activeTab, setActiveTab] = useState<'comments' | 'fields'>('comments')
+  // One copy of the comment list's view, shared by the desktop toolbar and the
+  // phone More menu so both drive the same list.
+  const commentView = useCommentView()
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [mobileShareOpen, setMobileShareOpen] = useState(false)
+  const resetCommentView = commentView.reset
+  const searchRequestedRef = useRef(false)
+
+  // The view used to live inside CommentPanel and reset whenever the panel
+  // unmounted (pane closed, or Fields tab). Keep that now the page owns it.
+  useEffect(() => {
+    if (!sidebarOpen || activeTab !== 'comments') resetCommentView()
+  }, [sidebarOpen, activeTab, resetCommentView])
+
+  useCommentsTabOnPhone(useCallback(() => setActiveTab('comments'), []))
   const deepLinkApplied = useRef(false)
 
   // Fetch folder tree to build the folder path for the breadcrumb
@@ -112,8 +136,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     () => api.get<ProjectMember[]>(`/projects/${projectId}/members`),
   )
   const currentMember = members?.find((m) => m.user_id === user?.id)
-  const currentRole = currentMember?.role ?? 'viewer'
-  const canComment = currentRole !== 'viewer'
+  const currentRole: ProjectRole = project?.role ?? currentMember?.role ?? 'viewer'
+  const canComment = asset?.can_comment ?? (currentRole !== 'viewer')
 
   // Fetch all assets for navigation (1 of N)
   const { data: allAssets } = useSWR<AssetResponse[]>(
@@ -178,6 +202,23 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   const navigateAsset = (assetId: string) => {
     router.push(`/projects/${projectId}/assets/${assetId}`)
   }
+
+  const openCompare = () => {
+    const readyVersions = versions
+      .filter((v) => v.processing_status === 'ready')
+      .sort((a, b) => a.version_number - b.version_number)
+    const cur = currentVersion ?? readyVersions[readyVersions.length - 1]
+    const prev = [...readyVersions].reverse().find((v) => v.version_number < cur.version_number)
+      ?? readyVersions.find((v) => v.id !== cur.id)
+    if (!prev) return
+    const p = new URLSearchParams(searchParams.toString())
+    p.set('compare', prev.id)
+    router.replace(`${pathname}?${p.toString()}`, { scroll: false })
+  }
+
+  const openVersionUpload = () => versionFileInputRef.current?.click()
+
+  const sortedVersions = [...versions].sort((a, b) => a.version_number - b.version_number)
 
   // Keyboard navigation for prev/next asset
   useEffect(() => {
@@ -296,7 +337,8 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           <VideoPlayer
             assetId={asset.id}
             comments={comments}
-            className="flex-1 min-h-0"
+            compact={sidebarOpen}
+            className={sidebarOpen ? 'md:flex-1 md:min-h-0' : 'flex-1 min-h-0'}
             overlay={
               <>
                 <AnnotationOverlay key={focusedCommentId ?? 'none'} />
@@ -344,11 +386,21 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <div className="absolute inset-x-0 top-0 flex h-[100svh] flex-col overflow-hidden md:inset-0 md:h-auto">
       {/* ─── Top bar (Frame.io style) ──────────────────────────────────── */}
-      <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
+      <div className="flex h-12 min-w-0 items-center justify-between border-b border-border bg-bg-secondary px-3 shrink-0">
         {/* Left: back + breadcrumb */}
         <div className="flex items-center gap-1 min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={(event) => toggleMobileNavigation(event.currentTarget)}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+            aria-label={mobileNavigationOpen ? 'Close navigation' : 'Open navigation'}
+            aria-controls="dashboard-navigation"
+            aria-expanded={mobileNavigationOpen}
+          >
+            <Menu className="h-4 w-4" />
+          </button>
           <Link
             href={`/projects/${asset.project_id}`}
             className="flex items-center justify-center h-7 w-7 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors shrink-0"
@@ -357,14 +409,36 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
           </Link>
 
           {/* Asset name only */}
-          <span className="text-[13px] text-text-primary font-medium truncate">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-text-primary">
             {asset.name}
           </span>
         </div>
 
+        {/* Compact asset navigation keeps review traversal available on phones. */}
+        {totalAssets > 1 && (
+          <div className="flex shrink-0 items-center gap-0.5 md:hidden">
+            <button
+              onClick={() => prevAsset && navigateAsset(prevAsset.id)}
+              disabled={!prevAsset}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Previous asset"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => nextAsset && navigateAsset(nextAsset.id)}
+              disabled={!nextAsset}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-30"
+              aria-label="Next asset"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+
         {/* Center: asset navigation */}
         {totalAssets > 1 && (
-          <div className="flex items-center gap-1 shrink-0">
+          <div className="hidden shrink-0 items-center gap-1 md:flex">
             <button
               onClick={() => prevAsset && navigateAsset(prevAsset.id)}
               disabled={!prevAsset}
@@ -388,7 +462,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
         )}
 
         {/* Right: version, share, sidebar toggle */}
-        <div className="flex items-center gap-2 shrink-0 flex-1 justify-end">
+        <div className="flex shrink-0 items-center gap-1 md:flex-1 md:justify-end md:gap-2">
           {/* Hidden file input for new version upload */}
           <input
             ref={versionFileInputRef}
@@ -406,22 +480,13 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
               setTimeout(() => refetchVersions(), 2500)
             }}
           />
-          <VersionSwitcher versions={versions} />
+          <div className="hidden md:block">
+            <VersionSwitcher versions={versions} />
+          </div>
           {asset && canCompare(asset.asset_type, versions) && (
             <button
-              onClick={() => {
-                const readyVersions = versions
-                  .filter((v) => v.processing_status === 'ready')
-                  .sort((a, b) => a.version_number - b.version_number)
-                const cur = currentVersion ?? readyVersions[readyVersions.length - 1]
-                const prev = [...readyVersions].reverse().find((v) => v.version_number < cur.version_number)
-                  ?? readyVersions.find((v) => v.id !== cur.id)
-                if (!prev) return
-                const p = new URLSearchParams(searchParams.toString())
-                p.set('compare', prev.id)
-                router.replace(`${pathname}?${p.toString()}`, { scroll: false })
-              }}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+              onClick={openCompare}
+              className="hidden h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:inline-flex"
               title="Compare versions"
             >
               <GitCompareArrows className="h-3.5 w-3.5" />
@@ -429,18 +494,185 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
             </button>
           )}
           <button
-            onClick={() => versionFileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-md px-2.5 h-8 text-xs font-medium border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
+            onClick={openVersionUpload}
+            className="hidden h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:inline-flex"
             title="Upload new version"
           >
             <Upload className="h-3.5 w-3.5" />
             New Version
           </button>
-          <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          <div className="hidden md:block">
+            <ShareDialog assetId={asset.id} assetName={asset.name} projectId={projectId} asset={asset} />
+          </div>
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger asChild>
+              <button
+                ref={mobileMoreActionsRef}
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+                aria-label="More review actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content
+                align="end"
+                sideOffset={6}
+                // "Search comments" opens and focuses the search field; don't
+                // hand focus back to the More button on top of it. Keyed on the
+                // pick itself, so every other close still returns focus.
+                onCloseAutoFocus={(event) => {
+                  if (searchRequestedRef.current) event.preventDefault()
+                  searchRequestedRef.current = false
+                }}
+                className="z-[100] min-w-[180px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl md:hidden"
+              >
+                {totalAssets > 1 && (
+                  <>
+                    <DropdownMenu.Item
+                      disabled={!prevAsset}
+                      onSelect={() => prevAsset && navigateAsset(prevAsset.id)}
+                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Previous asset
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      disabled={!nextAsset}
+                      onSelect={() => nextAsset && navigateAsset(nextAsset.id)}
+                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                      Next asset
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                  </>
+                )}
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover">
+                    Version v{currentVersion?.version_number ?? sortedVersions.at(-1)?.version_number ?? 1}
+                    <ChevronRight className="h-4 w-4" />
+                  </DropdownMenu.SubTrigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.SubContent className="z-[101] min-w-[140px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl">
+                      {sortedVersions.map((version) => {
+                        const unavailable = version.processing_status !== 'ready'
+                        return (
+                          <DropdownMenu.Item
+                            key={version.id}
+                            disabled={unavailable}
+                            onSelect={() => setCurrentVersion(version)}
+                            className={cn(
+                              'flex cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm outline-none transition-colors',
+                              currentVersion?.id === version.id
+                                ? 'bg-accent/10 text-accent'
+                                : 'text-text-secondary hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover',
+                              unavailable && 'cursor-not-allowed opacity-50',
+                            )}
+                          >
+                            <span>v{version.version_number}</span>
+                            <span className="text-xs capitalize text-text-tertiary">{version.processing_status}</span>
+                          </DropdownMenu.Item>
+                        )
+                      })}
+                    </DropdownMenu.SubContent>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Sub>
+                {asset && canCompare(asset.asset_type, versions) && (
+                  <DropdownMenu.Item
+                    onSelect={openCompare}
+                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                  >
+                    <GitCompareArrows className="h-4 w-4" />
+                    Compare versions
+                  </DropdownMenu.Item>
+                )}
+                <DropdownMenu.Item
+                  onSelect={openVersionUpload}
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                >
+                  <Upload className="h-4 w-4" />
+                  New version
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => setMobileShareOpen(true)}
+                  className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover"
+                >
+                  <Share2 className="h-4 w-4" />
+                  Share
+                </DropdownMenu.Item>
+                {/* Phones have no Fields tab; the same details live here. */}
+                <DropdownMenu.Sub>
+                  <DropdownMenu.SubTrigger className="flex w-full cursor-pointer items-center justify-between rounded-lg px-2.5 py-2 text-sm text-text-secondary outline-none transition-colors hover:bg-bg-hover hover:text-text-primary data-[highlighted]:bg-bg-hover">
+                    Details
+                    <ChevronRight className="h-4 w-4" />
+                  </DropdownMenu.SubTrigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.SubContent className="z-[101] w-60 space-y-2 rounded-xl border border-border bg-bg-elevated p-3 shadow-xl">
+                      {[
+                        { label: 'Name', value: asset.name },
+                        { label: 'Type', value: asset.asset_type.replace('_', ' ') },
+                        ...(currentVersion
+                          ? [
+                              { label: 'Version', value: `v${currentVersion.version_number}` },
+                              { label: 'Processing', value: currentVersion.processing_status },
+                            ]
+                          : []),
+                      ].map((detail) => (
+                        <div key={detail.label} className="flex items-center justify-between gap-4 text-xs">
+                          <span className="text-text-tertiary">{detail.label}</span>
+                          <span className="truncate font-medium capitalize text-text-primary">{detail.value}</span>
+                        </div>
+                      ))}
+                    </DropdownMenu.SubContent>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Sub>
+                {sidebarOpen && (
+                  <MobileCommentMenuItems
+                    view={commentView}
+                    comments={comments as any}
+                    assetType={asset.asset_type}
+                    onSearch={() => {
+                      searchRequestedRef.current = true
+                    }}
+                  />
+                )}
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+          <ShareDialog
+            assetId={asset.id}
+            assetName={asset.name}
+            projectId={projectId}
+            asset={asset}
+            open={mobileShareOpen}
+            onOpenChange={setMobileShareOpen}
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              mobileMoreActionsRef.current?.focus()
+            }}
+            hideTrigger
+            mobileDialog
+          />
           <button
             onClick={() => setSidebarOpen((p) => !p)}
             className={cn(
-              'flex items-center justify-center h-8 w-8 rounded-md transition-colors',
+              'flex h-8 w-8 items-center justify-center rounded-md transition-colors md:hidden',
+              sidebarOpen
+                ? 'bg-bg-hover text-text-primary'
+                : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
+            )}
+            aria-label={sidebarOpen ? 'Hide comments' : 'Show comments'}
+            aria-controls={sidebarOpen ? 'review-comments' : undefined}
+            aria-expanded={sidebarOpen}
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setSidebarOpen((p) => !p)}
+            className={cn(
+              'hidden h-8 w-8 items-center justify-center rounded-md transition-colors md:flex',
               sidebarOpen
                 ? 'bg-bg-hover text-text-primary'
                 : 'text-text-tertiary hover:text-text-primary hover:bg-bg-hover',
@@ -453,21 +685,39 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
       </div>
 
       {/* ─── Main content: viewer + sidebar ────────────────────────────── */}
+      {/* `review-workspace` / `review-viewer` are the hooks the phone-landscape
+          orientation rule in globals.css targets to turn this stack into two
+          columns. Width alone cannot decide it — a phone in landscape is
+          physically wide but still needs the compact review surface. */}
       {compareOpen && asset && currentVersion && canCompare(asset.asset_type, versions) ? (
         <CompareOverlay asset={asset} versions={versions} rightVersion={currentVersion} onClose={closeCompare} canComment={canComment} />
       ) : (
-      <div className="flex flex-1 flex-col overflow-y-auto min-h-0 md:flex-row md:overflow-hidden">
+      <div className="review-workspace flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         {/* Left: viewer column */}
-        <div className="flex flex-none flex-col min-w-0 h-[56svh] min-h-[16rem] max-h-[28rem] bg-bg-primary overflow-hidden md:flex-1 md:h-auto md:max-h-none">
+        <div
+          className={cn(
+            'review-viewer flex min-w-0 flex-col overflow-hidden bg-bg-primary',
+            !sidebarOpen
+              ? 'min-h-0 flex-1'
+              : asset.asset_type === 'video'
+                // Video sizes itself to a natural 16:9 box in portrait.
+                ? 'shrink-0'
+                // Image/audio viewers fill their column, so they still need a
+                // bounded height to share the screen with the comments pane.
+                : 'h-[min(56svh,28rem,calc(100svh-15rem))] shrink-0',
+            'md:h-auto md:max-h-none md:flex-1',
+          )}
+        >
           {/* Media viewer */}
           {renderMediaViewer()}
         </div>
 
         {/* Right: comments sidebar */}
         {sidebarOpen && (
-          <div className="w-full min-h-[24rem] flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:border-t-0 md:border-l animate-in slide-in-from-right-2 duration-150">
-            {/* Tabs (Frame.io pill style) */}
-            <div className="px-4 pt-3 pb-2 shrink-0">
+          <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col overflow-hidden border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0 animate-in slide-in-from-right-2 duration-150">
+            {/* Tabs (Frame.io pill style) — desktop only. On phones, Fields moves
+                to the More menu, so a lone Comments tab would be dead chrome. */}
+            <div className="hidden px-4 pt-3 pb-2 shrink-0 md:block">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
                 <button
                   onClick={() => setActiveTab('comments')}
@@ -506,7 +756,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     onAddReaction={addReaction}
                     onRemoveReaction={removeReaction}
                     onReply={() => {}}
-                    onSubmitReply={handleSubmitReply}
+                    onSubmitReply={canComment ? handleSubmitReply : undefined}
+                    canComment={canComment}
+                    view={commentView}
+                    compactToolbar
                   />
                   {canComment && (
                     <CommentInput

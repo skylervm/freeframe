@@ -17,11 +17,16 @@ import {
   PanelRightClose,
   PanelRightOpen,
   ArrowLeft,
+  MoreHorizontal,
 } from 'lucide-react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { cn } from '@/lib/utils'
 import { withBasePath } from '@/lib/base-path'
 import { useReview, type CreateCommentPayload } from '@/components/review/review-provider'
 import { useReviewStore } from '@/stores/review-store'
+import { useCommentView } from '@/components/review/comment-view'
+import { MobileCommentMenuItems } from '@/components/review/mobile-comment-menu'
+import { useCommentsTabOnPhone } from '@/hooks/use-comments-tab-on-phone'
 import type {
   SharePermission,
   ShareLinkAppearance,
@@ -798,6 +803,17 @@ function ShareReviewInner({
   const { currentVersion, isDrawingMode, focusedCommentId } = useReviewStore()
   const [sidebarOpen, setSidebarOpen] = React.useState(true)
   const [activeTab, setActiveTab] = React.useState<'comments' | 'fields'>('comments')
+  // Shared by the desktop comment toolbar and the phone ⋯ menu, as on the
+  // project review page.
+  const commentView = useCommentView()
+  const resetCommentView = commentView.reset
+  const searchRequestedRef = React.useRef(false)
+  // The view used to live inside CommentPanel and reset whenever the panel
+  // unmounted (pane closed, or Fields tab). Keep that now this screen owns it.
+  React.useEffect(() => {
+    if (!sidebarOpen || activeTab !== 'comments') resetCommentView()
+  }, [sidebarOpen, activeTab, resetCommentView])
+  useCommentsTabOnPhone(React.useCallback(() => setActiveTab('comments'), []))
   const [AnnotationOverlay, setAnnotationOverlay] = React.useState<any>(null)
   const [AnnotationCanvas, setAnnotationCanvas] = React.useState<any>(null)
 
@@ -855,7 +871,10 @@ function ShareReviewInner({
   }
 
   return (
-    <div className="flex flex-col h-screen bg-bg-primary text-text-primary">
+    // h-full of the fixed inset-0 wrapper, not h-screen: iOS Safari's 100vh is
+    // taller than the visible screen and hides the composer under its toolbar,
+    // including on phones wide enough in landscape to count as md.
+    <div className="flex flex-col h-full bg-bg-primary text-text-primary">
       {/* Top bar — same style as project review */}
       <div className="flex items-center justify-between border-b border-border px-3 h-12 bg-bg-secondary shrink-0">
         <div className="flex items-center gap-1 min-w-0 flex-1">
@@ -869,25 +888,80 @@ function ShareReviewInner({
             <VersionSwitcher versions={versions} />
           )}
           {allowDownload && (
-            <button className="flex items-center gap-1.5 h-7 px-3 rounded-md text-xs font-medium text-text-inverse bg-accent hover:bg-accent-hover transition-colors" onClick={() => handleDownload(token, asset.id, shareSession)}>
-              <Download className="h-3 w-3" /> Download
+            <button aria-label="Download" className="flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium text-text-inverse bg-accent hover:bg-accent-hover transition-colors md:px-3" onClick={() => handleDownload(token, asset.id, shareSession)}>
+              {/* Icon-only on phones, where the header also carries ⋯ and the name needs the room. */}
+              <Download className="h-3 w-3" /> <span className="hidden md:inline">Download</span>
             </button>
           )}
-          <button onClick={() => setSidebarOpen(v => !v)} className="flex items-center justify-center h-8 w-8 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
+          <button onClick={() => setSidebarOpen(v => !v)} aria-label={sidebarOpen ? 'Hide comments' : 'Show comments'} aria-controls={sidebarOpen ? 'review-comments' : undefined} aria-expanded={sidebarOpen} className="flex items-center justify-center h-8 w-8 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors">
             {sidebarOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
           </button>
+          {/* Phones: the comment toolbar is hidden, so its controls live here. */}
+          {sidebarOpen && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <button
+                  type="button"
+                  aria-label="Comment options"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-bg-hover hover:text-text-primary md:hidden"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content
+                  align="end"
+                  sideOffset={6}
+                  // "Search comments" focuses the search field; don't hand
+                  // focus back to this button on top of it.
+                  onCloseAutoFocus={(event) => {
+                    if (searchRequestedRef.current) event.preventDefault()
+                    searchRequestedRef.current = false
+                  }}
+                  className="z-[100] min-w-[180px] rounded-xl border border-border bg-bg-elevated p-1 shadow-xl md:hidden"
+                >
+                  <MobileCommentMenuItems
+                    view={commentView}
+                    comments={comments}
+                    assetType={asset.asset_type}
+                    onSearch={() => {
+                      searchRequestedRef.current = true
+                    }}
+                    // Export needs a signed-in account; a guest's would silently fail.
+                    showDownload={isLoggedIn}
+                  />
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          )}
         </div>
       </div>
 
       {/* Main: viewer + sidebar */}
-      <div className="relative flex flex-1 flex-col overflow-y-auto min-h-0 md:flex-row md:overflow-hidden">
+      {/* `review-workspace` / `review-viewer` / `#review-comments` are the hooks
+          the phone-landscape rule in globals.css uses to make two columns. */}
+      <div className="review-workspace relative flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
         {/* Media viewer — reuses project components */}
-        <div className="flex flex-none flex-col min-w-0 h-[56svh] min-h-[16rem] max-h-[28rem] bg-bg-primary overflow-hidden md:flex-1 md:h-auto md:max-h-none">
+        <div
+          className={cn(
+            'review-viewer flex min-w-0 flex-col overflow-hidden bg-bg-primary',
+            !sidebarOpen
+              ? 'min-h-0 flex-1'
+              : asset.asset_type === 'video' && versionReady && VideoPlayer
+                // Video sizes itself to its own aspect ratio in portrait.
+                ? 'shrink-0'
+                // Image/audio/loading fill their column, so they still need a
+                // bounded height to share the screen with the comments pane.
+                : 'h-[min(56svh,28rem,calc(100svh-15rem))] shrink-0',
+            'md:h-auto md:max-h-none md:flex-1',
+          )}
+        >
           {asset.asset_type === 'video' && versionReady && VideoPlayer ? (
             <VideoPlayer
               assetId={asset.id}
               comments={comments}
-              className="flex-1"
+              compact={sidebarOpen}
+              className={sidebarOpen ? 'md:flex-1' : 'flex-1'}
               initialStreamUrl={(asset as any).stream_url}
               overlay={
                 <>
@@ -920,8 +994,9 @@ function ShareReviewInner({
 
         {/* Right sidebar — reuses project comment panel */}
         {sidebarOpen && (
-          <div className="w-full min-h-[24rem] static flex flex-col border-t border-border bg-bg-secondary shrink-0 md:w-[360px] md:static md:inset-auto md:border-t-0 md:border-l">
-            <div className="px-4 pt-3 pb-2 shrink-0">
+          <div id="review-comments" className="flex min-h-0 w-full flex-1 flex-col border-t border-border bg-bg-secondary md:w-[360px] md:flex-none md:border-l md:border-t-0">
+            {/* Tabs — desktop only; phones always show comments. */}
+            <div className="hidden px-4 pt-3 pb-2 shrink-0 md:block">
               <div className="flex items-center bg-bg-tertiary rounded-lg p-0.5">
                 <button onClick={() => setActiveTab('comments')} className={`flex-1 py-1.5 text-[13px] font-medium rounded-md transition-all ${activeTab === 'comments' ? 'bg-bg-hover text-text-primary shadow-sm' : 'text-text-tertiary'}`}>
                   Comments
@@ -942,6 +1017,8 @@ function ShareReviewInner({
                   onRemoveReaction={() => {}}
                   onReply={() => {}}
                   onSubmitReply={async () => {}}
+                  view={commentView}
+                  compactToolbar
                 />
                 {canComment && CommentInput && (
                   <CommentInput

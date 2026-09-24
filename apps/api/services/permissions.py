@@ -22,6 +22,19 @@ def get_project_member(db: Session, project_id: uuid.UUID, user_id: uuid.UUID) -
 
 
 ROLE_RANK = {ProjectRole.owner: 4, ProjectRole.editor: 3, ProjectRole.reviewer: 2, ProjectRole.viewer: 1}
+WORKSPACE_ROLE_PROJECT_ROLE = {
+    # Workspace ownership manages the workspace itself. Project ownership stays
+    # explicit so a workspace administrator cannot change every project's
+    # members or external sharing.
+    WorkspaceRole.owner: ProjectRole.editor,
+    WorkspaceRole.editor: ProjectRole.editor,
+    WorkspaceRole.reviewer: ProjectRole.reviewer,
+    WorkspaceRole.viewer: ProjectRole.viewer,
+}
+
+
+def workspace_role_to_project_role(role: WorkspaceRole) -> ProjectRole:
+    return WORKSPACE_ROLE_PROJECT_ROLE[role]
 
 
 def require_workspace_owner_retained(db: Session, user_id: uuid.UUID) -> None:
@@ -86,10 +99,12 @@ def get_effective_project_role(db: Session, project_id: uuid.UUID, user: User) -
             share = db.query(ProjectFolderShare).filter(ProjectFolderShare.folder_id == folder.id, ProjectFolderShare.user_id == user.id, ProjectFolderShare.deleted_at.is_(None)).first()
             if share:
                 role = share.role
-        if role is None and not blocked and folder.scope == ProjectFolderScope.workspace:
+        if not blocked and folder.scope == ProjectFolderScope.workspace:
             workspace_member = db.query(WorkspaceMember).filter(WorkspaceMember.workspace_id == folder.workspace_id, WorkspaceMember.user_id == user.id, WorkspaceMember.deleted_at.is_(None)).first()
             if workspace_member:
-                role = ProjectRole.viewer
+                workspace_role = workspace_role_to_project_role(workspace_member.role)
+                if role is None or ROLE_RANK[workspace_role] > ROLE_RANK[role]:
+                    role = workspace_role
         if role and (inherited is None or ROLE_RANK[role] > ROLE_RANK[inherited]):
             inherited = role
     if inherited and (best is None or ROLE_RANK[inherited] > ROLE_RANK[best]):
@@ -123,9 +138,9 @@ def get_accessible_project_roles(db: Session, user: User) -> dict[uuid.UUID, Pro
             ProjectFolderShare.deleted_at.is_(None),
         )
     }
-    workspace_ids = {
-        workspace_id
-        for (workspace_id,) in db.query(WorkspaceMember.workspace_id).filter(
+    workspace_roles = {
+        workspace_id: workspace_role_to_project_role(role)
+        for workspace_id, role in db.query(WorkspaceMember.workspace_id, WorkspaceMember.role).filter(
             WorkspaceMember.user_id == user.id,
             WorkspaceMember.deleted_at.is_(None),
         )
@@ -152,8 +167,10 @@ def get_accessible_project_roles(db: Session, user: User) -> dict[uuid.UUID, Pro
                 role = ProjectRole.editor
             elif folder.id in shared_roles:
                 role = shared_roles[folder.id]
-            elif not blocked and folder.scope == ProjectFolderScope.workspace and folder.workspace_id in workspace_ids:
-                role = ProjectRole.viewer
+            if not blocked and folder.scope == ProjectFolderScope.workspace and folder.workspace_id in workspace_roles:
+                workspace_role = workspace_roles[folder.workspace_id]
+                if role is None or ROLE_RANK[workspace_role] > ROLE_RANK[role]:
+                    role = workspace_role
             if role and (inherited is None or ROLE_RANK[role] > ROLE_RANK[inherited]):
                 inherited = role
         if inherited and (project_id not in roles or ROLE_RANK[inherited] > ROLE_RANK[roles[project_id]]):
@@ -232,6 +249,53 @@ def can_access_asset(db: Session, asset: Asset, user: User) -> bool:
 def require_asset_access(db: Session, asset: Asset, user: User) -> None:
     if not can_access_asset(db, asset, user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+
+def can_comment_asset(db: Session, asset: Asset, user: User) -> bool:
+    """Whether a user can comment through a project role or direct asset grant."""
+    if not can_access_asset(db, asset, user):
+        return False
+    role = get_effective_project_role(db, asset.project_id, user)
+    if role and ROLE_RANK[role] >= ROLE_RANK[ProjectRole.reviewer]:
+        return True
+    return get_asset_share_permission(db, asset, user) in (SharePermission.comment, SharePermission.approve)
+
+
+def get_asset_comment_capabilities(db: Session, assets: list[Asset], user: User) -> dict[uuid.UUID, bool]:
+    """Resolve comment capability for asset lists without per-asset share queries."""
+    if not assets:
+        return {}
+    asset_ids = [asset.id for asset in assets]
+    project_ids = {asset.project_id for asset in assets}
+    active_project_ids = {
+        project_id
+        for (project_id,) in db.query(Project.id).filter(
+            Project.id.in_(project_ids),
+            Project.deleted_at.is_(None),
+        )
+    }
+    project_roles = get_accessible_project_roles(db, user)
+    direct_permissions = dict(db.query(AssetShare.asset_id, AssetShare.permission).filter(
+        AssetShare.asset_id.in_(asset_ids),
+        AssetShare.shared_with_user_id == user.id,
+        AssetShare.deleted_at.is_(None),
+    ).all())
+    return {
+        asset.id: (
+            project_roles.get(asset.project_id) is not None
+            and ROLE_RANK[project_roles[asset.project_id]] >= ROLE_RANK[ProjectRole.reviewer]
+        ) or (
+            asset.project_id in active_project_ids
+            and direct_permissions.get(asset.id) in (SharePermission.comment, SharePermission.approve)
+        )
+        for asset in assets
+    }
+
+
+def require_comment_access(db: Session, asset: Asset, user: User) -> None:
+    """Require a project Reviewer or a direct asset comment/approve grant."""
+    if not can_comment_asset(db, asset, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Requires comment access")
 
 
 def get_asset_share_permission(db: Session, asset: Asset, user: User) -> SharePermission:

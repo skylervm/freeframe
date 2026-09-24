@@ -15,7 +15,7 @@ from ..models.share import AssetShare
 from ..models.activity import Mention, Notification, NotificationType
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse
 from ..schemas.notification import AssignmentUpdate
-from ..services.permissions import require_effective_project_role, require_asset_access, can_access_asset, get_effective_project_role
+from ..services.permissions import require_effective_project_role, require_asset_access, can_access_asset, can_comment_asset, get_asset_comment_capabilities, get_effective_project_role
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
 from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, mime_to_asset_type
@@ -73,7 +73,7 @@ def _playable_version(db: Session, asset_id: uuid.UUID) -> AssetVersion | None:
     )
 
 
-def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
+def _build_asset_response(asset: Asset, db: Session, *, can_comment: bool = False) -> AssetResponse:
     """Build AssetResponse with latest version and its files."""
     latest_version = _display_version(db, asset.id)
 
@@ -94,10 +94,16 @@ def _build_asset_response(asset: Asset, db: Session) -> AssetResponse:
     resp = AssetResponse.model_validate(asset)
     resp.latest_version = version_response
     resp.thumbnail_url = thumbnail_url
+    resp.can_comment = can_comment
     return resp
 
 
-def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetResponse]:
+def _build_asset_responses_bulk(
+    assets: list[Asset],
+    db: Session,
+    *,
+    can_comment: bool | dict[uuid.UUID, bool] = False,
+) -> list[AssetResponse]:
     """Build AssetResponse list with bulk-loaded versions and files (no N+1)."""
     if not assets:
         return []
@@ -156,6 +162,7 @@ def _build_asset_responses_bulk(assets: list[Asset], db: Session) -> list[AssetR
         asset_resp = AssetResponse.model_validate(asset)
         asset_resp.latest_version = version_response
         asset_resp.thumbnail_url = thumbnail_url
+        asset_resp.can_comment = can_comment.get(asset.id, False) if isinstance(can_comment, dict) else can_comment
         result.append(asset_resp)
     return result
 
@@ -168,7 +175,8 @@ def list_assets(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not get_effective_project_role(db, project_id, current_user):
+    project_role = get_effective_project_role(db, project_id, current_user)
+    if not project_role:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a project member")
 
     query = db.query(Asset).filter(
@@ -204,7 +212,7 @@ def list_assets(
             )
             assets = [a for a in assets if a.id in usable or a.id not in has_any_version]
 
-    return _build_asset_responses_bulk(assets, db)
+    return _build_asset_responses_bulk(assets, db, can_comment=get_asset_comment_capabilities(db, assets, current_user))
 
 
 @router.get("/assets/{asset_id}", response_model=AssetResponse)
@@ -217,7 +225,7 @@ def get_asset(
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     require_asset_access(db, asset, current_user)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, can_comment=can_comment_asset(db, asset, current_user))
 
 
 @router.patch("/assets/{asset_id}", response_model=AssetResponse)
@@ -235,7 +243,7 @@ def update_asset(
         setattr(asset, field, value)
     db.commit()
     db.refresh(asset)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, can_comment=True)
 
 
 @router.delete("/assets/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -451,7 +459,7 @@ def update_assignment(
 
     db.commit()
     db.refresh(asset)
-    return _build_asset_response(asset, db)
+    return _build_asset_response(asset, db, can_comment=True)
 
 
 @router.get("/assets/{asset_id}/assignment")

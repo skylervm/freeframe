@@ -34,7 +34,7 @@ from ..schemas.project_folder import (
     WorkspaceMemberUpdate,
     WorkspaceResponse,
 )
-from ..services.permissions import ROLE_RANK, get_effective_project_role, require_workspace_owner_retained
+from ..services.permissions import ROLE_RANK, get_effective_project_role, require_workspace_owner_retained, workspace_role_to_project_role
 
 
 router = APIRouter(tags=["project-folders"])
@@ -104,8 +104,11 @@ def _folder_role(db: Session, folder: ProjectFolder, user: User) -> ProjectRole 
             ).first()
             if share:
                 role = share.role
-        if role is None and not blocked and current.scope == ProjectFolderScope.workspace and _workspace_member(db, current.workspace_id, user.id):
-            role = ProjectRole.viewer
+        workspace_member = _workspace_member(db, current.workspace_id, user.id)
+        if not blocked and current.scope == ProjectFolderScope.workspace and workspace_member:
+            workspace_role = workspace_role_to_project_role(workspace_member.role)
+            if role is None or ROLE_RANK[workspace_role] > ROLE_RANK[role]:
+                role = workspace_role
         if role and (best is None or ROLE_RANK[role] > ROLE_RANK[best]):
             best = role
     return best
@@ -560,8 +563,12 @@ def create_project_folder(body: ProjectFolderCreate, db: Session = Depends(get_d
         folder = ProjectFolder(workspace_id=workspace.id, parent_id=parent.id, owner_id=parent.owner_id, created_by=current_user.id, name=body.name, scope=parent.scope, is_private=body.is_private)
     else:
         scope = body.scope or ProjectFolderScope.personal
-        if scope == ProjectFolderScope.workspace and not _workspace_member(db, workspace.id, current_user.id):
-            raise HTTPException(status_code=403, detail="Workspace membership required")
+        workspace_member = _workspace_member(db, workspace.id, current_user.id)
+        if scope == ProjectFolderScope.workspace and (
+            not workspace_member
+            or ROLE_RANK[workspace_role_to_project_role(workspace_member.role)] < ROLE_RANK[ProjectRole.editor]
+        ):
+            raise HTTPException(status_code=403, detail="Workspace editor access required")
         folder = ProjectFolder(workspace_id=workspace.id, owner_id=current_user.id, created_by=current_user.id, name=body.name, scope=scope, is_private=body.is_private)
     duplicate = db.query(ProjectFolder.id).filter(
         ProjectFolder.workspace_id == workspace.id,

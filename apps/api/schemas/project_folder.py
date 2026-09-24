@@ -91,7 +91,7 @@ class WorkspaceResponse(BaseModel):
 
 class WorkspaceMemberRequest(BaseModel):
     user_id: uuid.UUID
-    role: WorkspaceRole = WorkspaceRole.member
+    role: WorkspaceRole = WorkspaceRole.viewer
 
 
 class WorkspaceMemberUpdate(BaseModel):

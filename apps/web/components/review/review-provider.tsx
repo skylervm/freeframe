@@ -125,6 +125,7 @@ export function ReviewProvider({
           deleted_at: null,
           stream_url: streamData?.url,
           thumbnail_url: streamData?.thumbnail_url,
+          can_comment: false,
           latest_version: streamData?.version_id
             ? {
                 id: streamData.version_id,
