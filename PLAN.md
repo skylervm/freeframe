@@ -77,6 +77,10 @@ membership-only owner and automation paths.
 
 - #28 (`47c47b3`): Settings → Workspace gives workspace owners an explicit roster for searching, adding, and removing members. Platform accounts and workspace membership remain distinct; the UI guards asynchronous roster and identity states, stale searches, concurrent mutations, and deleted-account memberships.
 
+### Workspace roles — complete
+
+- #30 (`664734f`): Workspace members can be Viewers, Reviewers, Editors, or Owners. Reviewer enables comments; Editor enables workspace-wide content and folder work; Owner manages the workspace roster and settings while inheriting Editor content access. The highest workspace, folder, or direct-project role applies, while private folders remain inheritance boundaries. Project sharing and project-member management remain direct-project-owner controls. Existing direct asset comment and approve grants remain valid for that asset.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
