@@ -248,7 +248,7 @@ export default function BrandingPage() {
       )}
 
       {!isAdmin && (
-        <p className="text-xs text-text-tertiary">Only super admins can edit branding settings.</p>
+        <p className="text-xs text-text-tertiary">Only super admins and workspace owners can edit branding settings.</p>
       )}
     </div>
   )

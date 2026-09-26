@@ -62,7 +62,7 @@ def test_workspace_owner_can_save(monkeypatch):
     assert ws.icon == PNG and res.has_icon
 
 
-@pytest.mark.parametrize("member", [None, SimpleNamespace(role=WorkspaceRole.editor), SimpleNamespace(role=WorkspaceRole.viewer)])
+@pytest.mark.parametrize("member", [None, SimpleNamespace(role=WorkspaceRole.editor), SimpleNamespace(role=WorkspaceRole.reviewer), SimpleNamespace(role=WorkspaceRole.viewer)])
 def test_non_owner_cannot_save(monkeypatch, member):
     ws = _workspace()
     monkeypatch.setattr(router, "_lock_workspace", lambda _db: ws)
