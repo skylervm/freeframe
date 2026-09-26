@@ -93,7 +93,7 @@ def test_missing_icon_serves_default_without_redirect(client, monkeypatch):
     monkeypatch.setattr(router, "_active_workspace", lambda _db: _workspace())
     res = client.get("/workspace/branding/icon.png", follow_redirects=False)
     assert res.status_code == 200
-    assert res.content == router._DEFAULT_ICON.read_bytes()
+    assert res.content == router._DEFAULT_ICON
     assert res.content.startswith(b"\x89PNG")
 
 
@@ -102,9 +102,11 @@ def test_etag_changes_with_branding_and_answers_304(client, monkeypatch):
     monkeypatch.setattr(router, "_active_workspace", lambda _db: ws)
     etag = client.get("/workspace/branding/icon.png").headers["etag"]
 
-    cached = client.get("/workspace/branding/icon.png", headers={"If-None-Match": etag})
-    assert cached.status_code == 304
-    assert cached.content == b""
+    for header in (etag, f"W/{etag}", f'"other", {etag}', "*"):
+        cached = client.get("/workspace/branding/icon.png", headers={"If-None-Match": header})
+        assert cached.status_code == 304, header
+        assert cached.content == b""
+    assert router._DEFAULT_ICON_HASH in etag
 
     ws.branding_updated_at = datetime(2026, 9, 27, tzinfo=timezone.utc)
     fresh = client.get("/workspace/branding/icon.png", headers={"If-None-Match": etag})
