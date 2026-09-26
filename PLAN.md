@@ -77,6 +77,15 @@ membership-only owner and automation paths.
 
 - #28 (`47c47b3`): Settings → Workspace gives workspace owners an explicit roster for searching, adding, and removing members. Platform accounts and workspace membership remain distinct; the UI guards asynchronous roster and identity states, stale searches, concurrent mutations, and deleted-account memberships.
 
+### Share links and workspace branding — complete (2026-09-26)
+
+- #33: share links set their title, description and og tags server-side (`app/share/[token]/page.tsx` `generateMetadata` → `http://api:8000/share/{token}`; client page moved to `share-page-client.tsx`), so iMessage/Slack previews show the link title. Falls back to "FreeFrame".
+- #34: on share pages a single click opens an asset in the viewer (double-click before); links with `open_in_viewer` off still only select. Dashboard keeps double-click.
+- #35: workspace logos and a generated 512px icon are stored on the workspace (migration `bb23cc45dd67`) instead of browser localStorage. The site favicon and apple-touch-icon are `/api/workspace/branding/icon.png`, regenerated from the logo on every save; a browser-only logo migrates up once from a superadmin's dashboard.
+- #36: branding images carry an ETag with weak If-None-Match → 304; the stock icon is bundled in `apps/api/static` and served directly (no redirect); oversized uploads are rejected before decoding.
+- #37: workspace owners can edit branding as well as superadmins.
+- Known, left as is: transparent icons render on black in iMessage (by choice: no background added); the favicon 503s before first-time setup; the one-time localStorage migration runs only for superadmins.
+
 ## Active tracker
 
 This file and [the project-folder specification](docs/spec-project-folder-workspace.md)
@@ -99,3 +108,6 @@ define the active implementation scope.
 - 2026-09-11: A project's Dropbox link is a capability URL for the delivery
   folder, so it is owner/editor-only in the UI and redacted from the API for
   lower roles; automation tokens may set it only on their own project.
+- 2026-09-26: Workspace branding is server-side and site-wide (one workspace).
+  The icon is the uploaded logo unchanged, centred on a transparent square.
+  Superadmins and workspace owners may edit it.
