@@ -1,5 +1,6 @@
 import base64
 import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -67,25 +68,51 @@ def test_rejects_oversized_png():
     assert e.value.status_code == 413
 
 
-def test_icon_served_as_png(monkeypatch):
+def test_oversized_value_rejected_before_decoding(monkeypatch):
+    decoded = []
+    monkeypatch.setattr(router.base64, "b64decode", lambda *a, **k: decoded.append(1))
+    big = "data:image/png;base64," + "A" * (router.BRANDING_MAX_BYTES * 2)
+    with pytest.raises(HTTPException) as e:
+        router._decode_png_data_url(big, "icon")
+    assert e.value.status_code == 413
+    assert decoded == []
+
+
+# The image routes below go through the real app so the `{image}.png` path is exercised.
+
+def test_icon_served_as_png(client, monkeypatch):
     monkeypatch.setattr(router, "_active_workspace", lambda _db: _workspace(icon=PNG))
-    res = router.get_workspace_branding_image("icon", db=MagicMock())
-    assert res.body == PNG
-    assert res.media_type == "image/png"
+    res = client.get("/workspace/branding/icon.png")
+    assert res.status_code == 200
+    assert res.content == PNG
+    assert res.headers["content-type"] == "image/png"
     assert res.headers["x-content-type-options"] == "nosniff"
 
 
-def test_missing_icon_falls_back_to_default(monkeypatch):
+def test_missing_icon_serves_default_without_redirect(client, monkeypatch):
     monkeypatch.setattr(router, "_active_workspace", lambda _db: _workspace())
-    monkeypatch.setattr(router.settings, "frontend_url", "https://review.example.com/")
-    res = router.get_workspace_branding_image("icon", db=MagicMock())
-    assert res.status_code == 307
-    assert res.headers["location"] == "https://review.example.com/icon-default.png"
+    res = client.get("/workspace/branding/icon.png", follow_redirects=False)
+    assert res.status_code == 200
+    assert res.content == router._DEFAULT_ICON.read_bytes()
+    assert res.content.startswith(b"\x89PNG")
 
 
-def test_missing_logo_and_unknown_image_404(monkeypatch):
+def test_etag_changes_with_branding_and_answers_304(client, monkeypatch):
+    ws = _workspace(icon=PNG, branding_updated_at=datetime(2026, 9, 26, tzinfo=timezone.utc))
+    monkeypatch.setattr(router, "_active_workspace", lambda _db: ws)
+    etag = client.get("/workspace/branding/icon.png").headers["etag"]
+
+    cached = client.get("/workspace/branding/icon.png", headers={"If-None-Match": etag})
+    assert cached.status_code == 304
+    assert cached.content == b""
+
+    ws.branding_updated_at = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    fresh = client.get("/workspace/branding/icon.png", headers={"If-None-Match": etag})
+    assert fresh.status_code == 200
+    assert fresh.headers["etag"] != etag
+
+
+def test_missing_logo_and_unknown_image_404(client, monkeypatch):
     monkeypatch.setattr(router, "_active_workspace", lambda _db: _workspace())
     for name in ("logo_dark", "name", "branding_updated_at"):
-        with pytest.raises(HTTPException) as e:
-            router.get_workspace_branding_image(name, db=MagicMock())
-        assert e.value.status_code == 404
+        assert client.get(f"/workspace/branding/{name}.png").status_code == 404

@@ -17,7 +17,7 @@ const dmSans = DM_Sans({
 export const metadata: Metadata = {
   title: "FreeFrame",
   description: "Collaborative media review and approval platform",
-  // Generated from the workspace logo; the api falls back to /icon-default.png.
+  // Generated from the workspace logo; the api serves the stock icon when none is set.
   icons: {
     icon: `${API_URL}/workspace/branding/icon.png`,
     apple: `${API_URL}/workspace/branding/icon.png`,
