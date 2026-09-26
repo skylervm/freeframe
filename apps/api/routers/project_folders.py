@@ -3,9 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 import base64
 import binascii
+import hashlib
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import RedirectResponse, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import and_, exists, or_, text
 from sqlalchemy.orm import Session
 
@@ -468,6 +470,19 @@ def get_workspace(db: Session = Depends(get_db), current_user: User = Depends(ge
 BRANDING_IMAGES = ("logo_dark", "logo_light", "icon")
 BRANDING_MAX_BYTES = 2 * 1024 * 1024
 _PNG_DATA_URL_PREFIX = "data:image/png;base64,"
+# Base64 inflates by 4/3; anything longer than this cannot decode to <= the cap.
+_BRANDING_MAX_ENCODED = len(_PNG_DATA_URL_PREFIX) + (BRANDING_MAX_BYTES + 2) // 3 * 4
+# Read at import so a packaging mistake fails at startup, not per request.
+_DEFAULT_ICON = (Path(__file__).resolve().parent.parent / "static" / "icon-default.png").read_bytes()
+_DEFAULT_ICON_HASH = hashlib.sha256(_DEFAULT_ICON).hexdigest()[:8]
+
+
+def _etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """Weak comparison, as If-None-Match requires: lists, W/ prefixes and *."""
+    if not if_none_match:
+        return False
+    tags = [tag.strip().removeprefix("W/") for tag in if_none_match.split(",")]
+    return "*" in tags or etag in tags
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -487,6 +502,8 @@ def _decode_png_data_url(value: str | None, field: str) -> bytes | None:
         return None
     if not value.startswith(_PNG_DATA_URL_PREFIX):
         raise HTTPException(status_code=422, detail=f"{field} must be a PNG data URL")
+    if len(value) > _BRANDING_MAX_ENCODED:
+        raise HTTPException(status_code=413, detail=f"{field} is larger than 2 MB")
     try:
         data = base64.b64decode(value[len(_PNG_DATA_URL_PREFIX):], validate=True)
     except (binascii.Error, ValueError):
@@ -522,21 +539,33 @@ def update_workspace_branding(
 
 
 @router.get("/workspace/branding/{image}.png")
-def get_workspace_branding_image(image: str, db: Session = Depends(get_db)):
+def get_workspace_branding_image(
+    image: str,
+    db: Session = Depends(get_db),
+    if_none_match: str | None = Header(default=None),
+):
     """Public: branding images are shown on share pages and as the favicon."""
     if image not in BRANDING_IMAGES:
         raise HTTPException(status_code=404, detail="Not found")
-    data = getattr(_active_workspace(db), image)
+    workspace = _active_workspace(db)
+    # Every branding save bumps branding_updated_at, so it versions all images.
+    version = workspace.branding_updated_at.timestamp() if workspace.branding_updated_at else "none"
+    headers = {
+        "Cache-Control": "public, max-age=300",
+        "X-Content-Type-Options": "nosniff",
+        # The default icon's hash covers a stock icon changed by a deploy.
+        "ETag": f'"{image}-{version}-{_DEFAULT_ICON_HASH}"' if image == "icon" else f'"{image}-{version}"',
+    }
+    if _etag_matches(if_none_match, headers["ETag"]):
+        return Response(status_code=304, headers=headers)
+    data = getattr(workspace, image)
     if data is None:
-        if image == "icon":
-            # No uploaded logo yet: fall back to the stock FreeFrame icon.
-            return RedirectResponse(f"{settings.frontend_url.rstrip('/')}/icon-default.png", status_code=307)
-        raise HTTPException(status_code=404, detail="Not found")
-    return Response(
-        content=data,
-        media_type="image/png",
-        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
-    )
+        if image != "icon":
+            raise HTTPException(status_code=404, detail="Not found")
+        # No uploaded logo yet: serve the stock FreeFrame icon directly, since
+        # some link-preview fetchers don't follow redirects for icons.
+        data = _DEFAULT_ICON
+    return Response(content=data, media_type="image/png", headers=headers)
 
 
 @router.get("/workspace/members", response_model=list[WorkspaceMemberResponse])
