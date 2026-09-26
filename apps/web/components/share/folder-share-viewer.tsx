@@ -293,8 +293,7 @@ function AssetGridCard({ asset, allowDownload, token, shareSession, isSelected, 
           : 'border-border hover:border-border-focus',
         'bg-bg-tertiary hover:bg-bg-hover',
       )}
-      onClick={() => onSelect(asset)}
-      onDoubleClick={() => onOpen(asset)}
+      onClick={() => { onSelect(asset); onOpen(asset) }}
     >
       {/* Thumbnail */}
       <div className={cn('w-full relative overflow-hidden bg-bg-tertiary', aspectClass)}>
@@ -1576,8 +1575,7 @@ export function FolderShareViewer({
                                     selectedAsset?.id === asset.id && 'bg-accent/5',
                                     i !== filteredAssets.length - 1 && 'border-b border-border',
                                   )}
-                                  onClick={() => setSelectedAsset(asset)}
-                                  onDoubleClick={() => openInViewer && setViewingAsset(asset)}
+                                  onClick={() => { setSelectedAsset(asset); if (openInViewer) setViewingAsset(asset) }}
                                 >
                                   {/* Square thumbnail */}
                                   <ListRowThumb asset={asset} TypeIcon={TypeIcon} />

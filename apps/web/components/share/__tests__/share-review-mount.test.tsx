@@ -37,7 +37,7 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
 
   afterEach(() => { vi.unstubAllGlobals() })
 
-  it('renders the review panel tabs after double-clicking an asset', async () => {
+  it('renders the review panel tabs after a single click on an asset', async () => {
     render(
       <FolderShareViewer
         token="t" folderName="F" title="T" description={null}
@@ -47,12 +47,28 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
     )
 
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
 
     // These tabs live inside ShareReviewInner, so they only appear if that
     // subtree mounted — i.e. if its hook imports resolved.
     await waitFor(() => expect(screen.getByText('Fields')).toBeInTheDocument(), { timeout: 3000 })
     expect(screen.getByText('Comments')).toBeInTheDocument()
+  })
+
+  it('only selects on click when the link disables the viewer', async () => {
+    render(
+      <FolderShareViewer
+        token="t" folderName="F" title="T" description={null}
+        permission="comment" allowDownload={false} showVersions={false}
+        appearance={{ open_in_viewer: false } as never} branding={null}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Clip.mp4'))
+
+    await new Promise((r) => setTimeout(r, 300))
+    expect(screen.queryByText('Fields')).not.toBeInTheDocument()
   })
 })
 
@@ -95,7 +111,7 @@ describe('folder share review on phones', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
     await waitFor(() => expect(document.getElementById('review-comments')).not.toBeNull(), { timeout: 3000 })
   }
 
@@ -222,7 +238,7 @@ describe('folder share review — a ready video on phones', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
 
     const player = await screen.findByTestId('video-player', {}, { timeout: 3000 })
     expect(player).toHaveAttribute('data-compact', 'true')
