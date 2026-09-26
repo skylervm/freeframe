@@ -89,6 +89,20 @@ class WorkspaceResponse(BaseModel):
     role: WorkspaceRole
 
 
+class WorkspaceBrandingResponse(BaseModel):
+    has_logo_dark: bool
+    has_logo_light: bool
+    has_icon: bool
+    updated_at: datetime | None = None
+
+
+class WorkspaceBrandingUpdate(BaseModel):
+    """Each field is a base64 PNG data URL, or null to clear it."""
+    logo_dark: str | None = None
+    logo_light: str | None = None
+    icon: str | None = None
+
+
 class WorkspaceMemberRequest(BaseModel):
     user_id: uuid.UUID
     role: WorkspaceRole = WorkspaceRole.viewer

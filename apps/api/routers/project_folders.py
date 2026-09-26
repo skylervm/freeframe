@@ -1,7 +1,11 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import base64
+import binascii
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import and_, exists, or_, text
 from sqlalchemy.orm import Session
 
@@ -29,6 +33,8 @@ from ..schemas.project_folder import (
     ProjectFolderShareRequest,
     ProjectFolderShareResponse,
     ProjectFolderUpdate,
+    WorkspaceBrandingResponse,
+    WorkspaceBrandingUpdate,
     WorkspaceMemberRequest,
     WorkspaceMemberResponse,
     WorkspaceMemberUpdate,
@@ -457,6 +463,79 @@ def get_workspace(db: Session = Depends(get_db), current_user: User = Depends(ge
     if not member:
         raise HTTPException(status_code=403, detail="Not a workspace member")
     return WorkspaceResponse(id=workspace.id, name=workspace.name, role=member.role)
+
+
+BRANDING_IMAGES = ("logo_dark", "logo_light", "icon")
+BRANDING_MAX_BYTES = 2 * 1024 * 1024
+_PNG_DATA_URL_PREFIX = "data:image/png;base64,"
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _branding_response(workspace: Workspace) -> WorkspaceBrandingResponse:
+    return WorkspaceBrandingResponse(
+        has_logo_dark=workspace.logo_dark is not None,
+        has_logo_light=workspace.logo_light is not None,
+        has_icon=workspace.icon is not None,
+        updated_at=workspace.branding_updated_at,
+    )
+
+
+def _decode_png_data_url(value: str | None, field: str) -> bytes | None:
+    if value is None:
+        return None
+    if not value.startswith(_PNG_DATA_URL_PREFIX):
+        raise HTTPException(status_code=422, detail=f"{field} must be a PNG data URL")
+    try:
+        data = base64.b64decode(value[len(_PNG_DATA_URL_PREFIX):], validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=422, detail=f"{field} is not valid base64")
+    if not data.startswith(_PNG_SIGNATURE):
+        raise HTTPException(status_code=422, detail=f"{field} is not a PNG")
+    if len(data) > BRANDING_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"{field} is larger than 2 MB")
+    return data
+
+
+@router.get("/workspace/branding", response_model=WorkspaceBrandingResponse)
+def get_workspace_branding(db: Session = Depends(get_db)):
+    """Public: which branding images exist, so clients can build image URLs."""
+    return _branding_response(_active_workspace(db))
+
+
+@router.put("/workspace/branding", response_model=WorkspaceBrandingResponse)
+def update_workspace_branding(
+    body: WorkspaceBrandingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Replace all branding images. Superadmins only, matching the settings page."""
+    if not current_user.is_superadmin:
+        raise HTTPException(status_code=403, detail="Superadmin access required")
+    workspace = _lock_workspace(db)
+    for field in BRANDING_IMAGES:
+        setattr(workspace, field, _decode_png_data_url(getattr(body, field), field))
+    workspace.branding_updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(workspace)
+    return _branding_response(workspace)
+
+
+@router.get("/workspace/branding/{image}.png")
+def get_workspace_branding_image(image: str, db: Session = Depends(get_db)):
+    """Public: branding images are shown on share pages and as the favicon."""
+    if image not in BRANDING_IMAGES:
+        raise HTTPException(status_code=404, detail="Not found")
+    data = getattr(_active_workspace(db), image)
+    if data is None:
+        if image == "icon":
+            # No uploaded logo yet: fall back to the stock FreeFrame icon.
+            return RedirectResponse(f"{settings.frontend_url.rstrip('/')}/icon-default.png", status_code=307)
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=data,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/workspace/members", response_model=list[WorkspaceMemberResponse])

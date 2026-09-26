@@ -7,6 +7,7 @@ import { useBrandingStore } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { saveWorkspaceBranding } from '@/lib/workspace-branding'
 
 function LogoUploadSlot({
   label,
@@ -103,6 +104,16 @@ export default function BrandingPage() {
     setTimeout(() => setNameSaved(false), 2000)
   }
 
+  const [saveError, setSaveError] = React.useState<string | null>(null)
+
+  // Logos are saved to the server, which also regenerates the site icon from them.
+  function saveLogos(dark: string | null, light: string | null) {
+    setOrgLogoDark(dark)
+    setOrgLogoLight(light)
+    setSaveError(null)
+    saveWorkspaceBranding(dark, light).catch((err) => setSaveError(err?.message || 'Could not save logo'))
+  }
+
   const isAdmin = user?.is_superadmin
   const hasCustomBranding = orgName !== 'FreeFrame' || orgLogoDark !== null || orgLogoLight !== null
 
@@ -156,7 +167,9 @@ export default function BrandingPage() {
         <h2 className="text-sm font-semibold text-text-primary">Logo</h2>
         <p className="text-xs text-text-tertiary -mt-1">
           Upload separate logos for dark and light themes. If only one is set, it will be used for both.
+          The site icon is generated from the dark theme logo, or the light one if that is all there is.
         </p>
+        {saveError && <p className="text-xs text-status-error">{saveError}</p>}
 
         <div className="space-y-3">
           <div className="flex items-center gap-2 mb-1">
@@ -167,8 +180,8 @@ export default function BrandingPage() {
             label="Dark theme logo"
             description="Shown when the app is in dark mode. Use a light-colored logo."
             logoUrl={orgLogoDark}
-            onUpload={isAdmin ? setOrgLogoDark : () => {}}
-            onRemove={isAdmin ? () => setOrgLogoDark(null) : () => {}}
+            onUpload={isAdmin ? (url) => saveLogos(url, orgLogoLight) : () => {}}
+            onRemove={isAdmin ? () => saveLogos(null, orgLogoLight) : () => {}}
             previewBg="bg-zinc-900"
           />
 
@@ -180,8 +193,8 @@ export default function BrandingPage() {
             label="Light theme logo"
             description="Shown when the app is in light mode. Use a dark-colored logo."
             logoUrl={orgLogoLight}
-            onUpload={isAdmin ? setOrgLogoLight : () => {}}
-            onRemove={isAdmin ? () => setOrgLogoLight(null) : () => {}}
+            onUpload={isAdmin ? (url) => saveLogos(orgLogoDark, url) : () => {}}
+            onRemove={isAdmin ? () => saveLogos(orgLogoDark, null) : () => {}}
             previewBg="bg-white"
           />
         </div>
@@ -218,7 +231,7 @@ export default function BrandingPage() {
             variant="ghost"
             size="sm"
             className="text-status-error hover:text-status-error hover:bg-status-error/10 gap-1.5"
-            onClick={() => { resetAll(); setNameValue('FreeFrame') }}
+            onClick={() => { resetAll(); setNameValue('FreeFrame'); saveLogos(null, null) }}
           >
             <RotateCcw className="h-3.5 w-3.5" />
             Reset to defaults

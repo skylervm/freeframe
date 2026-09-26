@@ -11,6 +11,7 @@ import { UploadsPanel } from "@/components/layout/uploads-panel";
 import { UploadSSEBridge } from "@/components/layout/upload-sse-bridge";
 import { MobileNavigationProvider } from "@/components/layout/mobile-navigation-context";
 import { cn } from "@/lib/utils";
+import { syncWorkspaceBranding } from "@/lib/workspace-branding";
 
 export default function DashboardLayout({
   children,
@@ -24,7 +25,7 @@ export default function DashboardLayout({
   const mobileNavigationTriggerRef = React.useRef<HTMLElement | null>(null);
   const backgroundContentRef = React.useRef<HTMLDivElement>(null);
   const [commandOpen, setCommandOpen] = React.useState(false);
-  const { fetchUser } = useAuthStore();
+  const { fetchUser, user } = useAuthStore();
   const { fetchHistory } = useUploadStore();
 
   // Hide header on asset viewer pages — the viewer has its own top bar
@@ -34,6 +35,14 @@ export default function DashboardLayout({
     fetchUser();
     fetchHistory();
   }, [fetchUser, fetchHistory]);
+
+  // Branding is stored on the server; pull it into the local store once the
+  // user is known (superadmins also migrate a browser-only logo up).
+  const isSuperadmin = user?.is_superadmin;
+  React.useEffect(() => {
+    if (isSuperadmin === undefined) return;
+    syncWorkspaceBranding(isSuperadmin).catch(() => {});
+  }, [isSuperadmin]);
 
   // Global keyboard shortcut for command palette
   React.useEffect(() => {
