@@ -37,7 +37,7 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
 
   afterEach(() => { vi.unstubAllGlobals() })
 
-  it('renders the review panel tabs after double-clicking an asset', async () => {
+  it('renders the review panel tabs after a single click on an asset', async () => {
     render(
       <FolderShareViewer
         token="t" folderName="F" title="T" description={null}
@@ -47,7 +47,7 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
     )
 
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
 
     // These tabs live inside ShareReviewInner, so they only appear if that
     // subtree mounted — i.e. if its hook imports resolved.
@@ -95,7 +95,7 @@ describe('folder share review on phones', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
     await waitFor(() => expect(document.getElementById('review-comments')).not.toBeNull(), { timeout: 3000 })
   }
 
@@ -222,7 +222,7 @@ describe('folder share review — a ready video on phones', () => {
       />,
     )
     await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
-    fireEvent.doubleClick(screen.getByText('Clip.mp4'))
+    fireEvent.click(screen.getByText('Clip.mp4'))
 
     const player = await screen.findByTestId('video-player', {}, { timeout: 3000 })
     expect(player).toHaveAttribute('data-compact', 'true')
