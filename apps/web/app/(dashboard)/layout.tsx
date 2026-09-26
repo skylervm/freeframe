@@ -41,7 +41,7 @@ export default function DashboardLayout({
   const isSuperadmin = user?.is_superadmin;
   React.useEffect(() => {
     if (isSuperadmin === undefined) return;
-    syncWorkspaceBranding(isSuperadmin).catch(() => {});
+    syncWorkspaceBranding(isSuperadmin).catch((err) => console.warn("Workspace branding sync failed", err));
   }, [isSuperadmin]);
 
   // Global keyboard shortcut for command palette
