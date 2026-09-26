@@ -527,10 +527,10 @@ def update_workspace_branding(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Replace all branding images. Superadmins only, matching the settings page."""
-    if not current_user.is_superadmin:
-        raise HTTPException(status_code=403, detail="Superadmin access required")
+    """Replace all branding images. Superadmins and workspace owners only."""
     workspace = _lock_workspace(db)
+    if not current_user.is_superadmin:
+        _require_workspace_owner(db, workspace.id, current_user)
     for field in BRANDING_IMAGES:
         setattr(workspace, field, _decode_png_data_url(getattr(body, field), field))
     workspace.branding_updated_at = datetime.now(timezone.utc)

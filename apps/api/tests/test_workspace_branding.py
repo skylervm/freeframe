@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from apps.api.routers import project_folders as router
+from apps.api.models.workspace import WorkspaceRole
 from apps.api.schemas.project_folder import WorkspaceBrandingUpdate
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
@@ -41,13 +42,37 @@ def test_superadmin_saves_logos_and_icon(monkeypatch):
     db.commit.assert_called_once()
 
 
-def test_non_superadmin_cannot_save(monkeypatch):
-    monkeypatch.setattr(router, "_lock_workspace", lambda _db: _workspace())
+def _flags_db(ws):
+    db = MagicMock()
+    db.query.return_value.filter.return_value.one.side_effect = lambda: (
+        ws.logo_dark is not None, ws.logo_light is not None, ws.icon is not None, ws.branding_updated_at,
+    )
+    return db
+
+
+def test_workspace_owner_can_save(monkeypatch):
+    ws = _workspace()
+    monkeypatch.setattr(router, "_lock_workspace", lambda _db: ws)
+    monkeypatch.setattr(router, "_workspace_member", lambda *_: SimpleNamespace(role=WorkspaceRole.owner))
+
+    res = router.update_workspace_branding(
+        WorkspaceBrandingUpdate(icon=PNG_URL), db=_flags_db(ws), current_user=SimpleNamespace(id=uuid.uuid4(), is_superadmin=False)
+    )
+
+    assert ws.icon == PNG and res.has_icon
+
+
+@pytest.mark.parametrize("member", [None, SimpleNamespace(role=WorkspaceRole.editor), SimpleNamespace(role=WorkspaceRole.reviewer), SimpleNamespace(role=WorkspaceRole.viewer)])
+def test_non_owner_cannot_save(monkeypatch, member):
+    ws = _workspace()
+    monkeypatch.setattr(router, "_lock_workspace", lambda _db: ws)
+    monkeypatch.setattr(router, "_workspace_member", lambda *_: member)
     with pytest.raises(HTTPException) as e:
         router.update_workspace_branding(
-            WorkspaceBrandingUpdate(icon=PNG_URL), db=MagicMock(), current_user=SimpleNamespace(is_superadmin=False)
+            WorkspaceBrandingUpdate(icon=PNG_URL), db=MagicMock(), current_user=SimpleNamespace(id=uuid.uuid4(), is_superadmin=False)
         )
     assert e.value.status_code == 403
+    assert ws.icon is None
 
 
 @pytest.mark.parametrize("value", [

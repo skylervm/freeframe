@@ -1,13 +1,16 @@
 'use client'
 
 import * as React from 'react'
+import useSWR from 'swr'
 import { Palette, Upload, X, Check, RotateCcw, Moon, Sun } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth-store'
 import { useBrandingStore } from '@/stores/branding-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { api } from '@/lib/api'
 import { saveWorkspaceBranding } from '@/lib/workspace-branding'
+import type { WorkspaceRole } from '@/types'
 
 function LogoUploadSlot({
   label,
@@ -114,7 +117,12 @@ export default function BrandingPage() {
     saveWorkspaceBranding(dark, light).catch((err) => setSaveError(err?.message || 'Could not save logo'))
   }
 
-  const isAdmin = user?.is_superadmin
+  // Same '/workspace' key as the settings nav, so SWR shares the request.
+  const { data: workspace } = useSWR<{ role: WorkspaceRole }>(
+    user ? '/workspace' : null,
+    () => api.get<{ role: WorkspaceRole }>('/workspace'),
+  )
+  const isAdmin = user?.is_superadmin || workspace?.role === 'owner'
   const hasCustomBranding = orgName !== 'FreeFrame' || orgLogoDark !== null || orgLogoLight !== null
 
   // Which logo is active right now
@@ -240,7 +248,7 @@ export default function BrandingPage() {
       )}
 
       {!isAdmin && (
-        <p className="text-xs text-text-tertiary">Only super admins can edit branding settings.</p>
+        <p className="text-xs text-text-tertiary">Only super admins and workspace owners can edit branding settings.</p>
       )}
     </div>
   )
