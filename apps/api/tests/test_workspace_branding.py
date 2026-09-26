@@ -1,4 +1,5 @@
 import base64
+import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -13,7 +14,7 @@ PNG_URL = "data:image/png;base64," + base64.b64encode(PNG).decode()
 
 
 def _workspace(**kw):
-    ws = SimpleNamespace(logo_dark=None, logo_light=None, icon=None, branding_updated_at=None)
+    ws = SimpleNamespace(id=uuid.uuid4(), logo_dark=None, logo_light=None, icon=None, branding_updated_at=None)
     ws.__dict__.update(kw)
     return ws
 
@@ -23,13 +24,20 @@ def test_superadmin_saves_logos_and_icon(monkeypatch):
     monkeypatch.setattr(router, "_lock_workspace", lambda _db: ws)
     user = SimpleNamespace(is_superadmin=True)
 
+    db = MagicMock()
+    # The response reads presence flags back from the database, not the blobs.
+    db.query.return_value.filter.return_value.one.side_effect = lambda: (
+        ws.logo_dark is not None, ws.logo_light is not None, ws.icon is not None, ws.branding_updated_at,
+    )
+
     res = router.update_workspace_branding(
-        WorkspaceBrandingUpdate(logo_dark=PNG_URL, logo_light=None, icon=PNG_URL), db=MagicMock(), current_user=user
+        WorkspaceBrandingUpdate(logo_dark=PNG_URL, logo_light=None, icon=PNG_URL), db=db, current_user=user
     )
 
     assert ws.logo_dark == PNG and ws.icon == PNG and ws.logo_light is None
     assert res.has_logo_dark and res.has_icon and not res.has_logo_light
     assert res.updated_at is not None
+    db.commit.assert_called_once()
 
 
 def test_non_superadmin_cannot_save(monkeypatch):

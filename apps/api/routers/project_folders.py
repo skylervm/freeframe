@@ -471,13 +471,15 @@ _PNG_DATA_URL_PREFIX = "data:image/png;base64,"
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def _branding_response(workspace: Workspace) -> WorkspaceBrandingResponse:
-    return WorkspaceBrandingResponse(
-        has_logo_dark=workspace.logo_dark is not None,
-        has_logo_light=workspace.logo_light is not None,
-        has_icon=workspace.icon is not None,
-        updated_at=workspace.branding_updated_at,
-    )
+def _branding_response(db: Session, workspace_id: uuid.UUID) -> WorkspaceBrandingResponse:
+    # Select presence flags, not the image blobs themselves.
+    row = db.query(
+        Workspace.logo_dark.isnot(None),
+        Workspace.logo_light.isnot(None),
+        Workspace.icon.isnot(None),
+        Workspace.branding_updated_at,
+    ).filter(Workspace.id == workspace_id).one()
+    return WorkspaceBrandingResponse(has_logo_dark=row[0], has_logo_light=row[1], has_icon=row[2], updated_at=row[3])
 
 
 def _decode_png_data_url(value: str | None, field: str) -> bytes | None:
@@ -499,7 +501,7 @@ def _decode_png_data_url(value: str | None, field: str) -> bytes | None:
 @router.get("/workspace/branding", response_model=WorkspaceBrandingResponse)
 def get_workspace_branding(db: Session = Depends(get_db)):
     """Public: which branding images exist, so clients can build image URLs."""
-    return _branding_response(_active_workspace(db))
+    return _branding_response(db, _active_workspace(db).id)
 
 
 @router.put("/workspace/branding", response_model=WorkspaceBrandingResponse)
@@ -516,8 +518,7 @@ def update_workspace_branding(
         setattr(workspace, field, _decode_png_data_url(getattr(body, field), field))
     workspace.branding_updated_at = datetime.now(timezone.utc)
     db.commit()
-    db.refresh(workspace)
-    return _branding_response(workspace)
+    return _branding_response(db, workspace.id)
 
 
 @router.get("/workspace/branding/{image}.png")

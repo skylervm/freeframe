@@ -49,10 +49,13 @@ async function renderPng(src: string, fit: (w: number, h: number) => { cw: numbe
   return canvas.toDataURL('image/png')
 }
 
-/** The logo as-is, rasterised to PNG and capped at 1024px on its long side. */
+/**
+ * The logo as-is, rasterised to PNG and capped at 512px on its long side, which
+ * keeps even a photographic logo under the api's 2 MB limit.
+ */
 export function logoToPng(src: string) {
   return renderPng(src, (w, h) => {
-    const s = Math.min(1, 1024 / Math.max(w, h))
+    const s = Math.min(1, 512 / Math.max(w, h))
     const cw = Math.round(w * s)
     const ch = Math.round(h * s)
     return { cw, ch, x: 0, y: 0, w: cw, h: ch }
@@ -69,8 +72,11 @@ export function logoToIcon(src: string) {
   })
 }
 
+let latestSave = 0
+
 /** Save both logos to the server and regenerate the site icon from them. */
 export async function saveWorkspaceBranding(dark: string | null, light: string | null) {
+  const save = ++latestSave
   const [logoDark, logoLight] = await Promise.all([
     dark ? logoToPng(dark) : null,
     light ? logoToPng(light) : null,
@@ -82,7 +88,8 @@ export async function saveWorkspaceBranding(dark: string | null, light: string |
     logo_light: logoLight,
     icon,
   })
-  applyToStore(b)
+  // A slower, older save must not overwrite the store after a newer one.
+  if (save === latestSave) applyToStore(b)
 }
 
 /**
