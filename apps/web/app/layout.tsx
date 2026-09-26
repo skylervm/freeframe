@@ -4,6 +4,8 @@ import { ToastProvider } from "@/components/shared/toast";
 import { ThemeInitializer } from "@/components/shared/theme-initializer";
 import "./globals.css";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 const dmSans = DM_Sans({
   subsets: ["latin"],
   display: "swap",
@@ -15,6 +17,11 @@ const dmSans = DM_Sans({
 export const metadata: Metadata = {
   title: "FreeFrame",
   description: "Collaborative media review and approval platform",
+  // Generated from the workspace logo; the api falls back to /icon-default.png.
+  icons: {
+    icon: `${API_URL}/workspace/branding/icon.png`,
+    apple: `${API_URL}/workspace/branding/icon.png`,
+  },
 };
 
 export const viewport: Viewport = {
