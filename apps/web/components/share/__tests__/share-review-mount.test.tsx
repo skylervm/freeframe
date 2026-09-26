@@ -54,6 +54,22 @@ describe('folder share — opening an asset mounts the review UI (#192)', () => 
     await waitFor(() => expect(screen.getByText('Fields')).toBeInTheDocument(), { timeout: 3000 })
     expect(screen.getByText('Comments')).toBeInTheDocument()
   })
+
+  it('only selects on click when the link disables the viewer', async () => {
+    render(
+      <FolderShareViewer
+        token="t" folderName="F" title="T" description={null}
+        permission="comment" allowDownload={false} showVersions={false}
+        appearance={{ open_in_viewer: false } as never} branding={null}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText('Clip.mp4')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Clip.mp4'))
+
+    await new Promise((r) => setTimeout(r, 300))
+    expect(screen.queryByText('Fields')).not.toBeInTheDocument()
+  })
 })
 
 describe('folder share review on phones', () => {
