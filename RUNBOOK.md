@@ -22,14 +22,18 @@
 
 - Logos (dark and light) and a generated icon are stored in the database, on the
   `workspaces` row (`logo_dark`, `logo_light`, `icon`, `branding_updated_at`), not in
-  the browser. Added by migration `bb23cc45dd67`; the api container runs
-  `alembic upgrade head` on start, so a deploy applies it with no manual step.
-- Public, no login: `GET /workspace/branding/{logo_dark|logo_light|icon}.png`. The
-  site favicon and apple-touch-icon are `icon.png` (`apps/web/app/layout.tsx`).
+  the browser. Added by migration `bb23cc45dd67`. The `command:` for the api in
+  `docker-compose.prod.yml` runs `alembic upgrade head` on start, so a deploy applies it
+  with no manual step (running the image with its default command would skip it).
+- Public, no login once setup is done: `GET /api/workspace/branding/{logo_dark|logo_light|icon}.png`
+  on the site domain (the proxy strips `/api` before it reaches the api). The site
+  favicon and apple-touch-icon are `icon.png` (`apps/web/app/layout.tsx`).
 - With no uploaded logo, `icon.png` serves the stock icon `apps/api/static/icon-default.png`.
-  It ships inside the api image (`COPY apps/api`), so changing it needs an api rebuild.
+  It ships inside the api image (`COPY apps/api`), so changing it needs an api rebuild;
+  `icon.png`'s ETag includes a hash of that file, so a changed stock icon shows up within
+  5 minutes without anyone saving branding. A missing file stops the api from starting.
 - Editable by superadmins and workspace owners (Settings, Branding).
 - Responses are cached for 5 minutes (`Cache-Control: max-age=300`, plus an ETag that
   changes on every branding save). A new icon can take up to 5 minutes to show.
-- Before the first-time workspace setup is done, the favicon returns 503
-  ("Workspace is not initialized"). Expected, not an outage.
+- Before first-time setup is done, every branding image (favicon included) returns 503
+  "FreeFrame is not set up yet" from the setup guard. Expected, not an outage.
