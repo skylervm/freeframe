@@ -55,3 +55,37 @@ export function loopTarget(
   if (!loopEnabled || !range) return null
   return currentTime >= range.end ? range.start : null
 }
+
+/** Context shown either side of the range in the zoom strip: at least this many seconds. */
+export const ZOOM_MIN_PAD_SECONDS = 15
+
+export interface ZoomWindow {
+  start: number
+  end: number
+}
+
+/**
+ * The stretch of media the zoom strip shows: the range plus padding on both
+ * sides (at least ZOOM_MIN_PAD_SECONDS, or half the range for long ranges),
+ * kept inside 0..duration.
+ */
+export function zoomWindow(range: ClipRange, duration: number): ZoomWindow {
+  const pad = Math.max(ZOOM_MIN_PAD_SECONDS, (range.end - range.start) / 2)
+  return {
+    start: Math.max(0, range.start - pad),
+    end: Math.min(duration, range.end + pad),
+  }
+}
+
+/** Where `time` sits inside the window as a 0..100 percentage (clamped). */
+export function windowPercent(time: number, window: ZoomWindow): number {
+  const length = window.end - window.start
+  if (length <= 0) return 0
+  return clamp(((time - window.start) / length) * 100, 0, 100)
+}
+
+/** The time at horizontal position `ratio` (0..1) across the window. */
+export function windowTimeAt(ratio: number, window: ZoomWindow): number {
+  return window.start + clamp(ratio, 0, 1) * (window.end - window.start)
+}
+

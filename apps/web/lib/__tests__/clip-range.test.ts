@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_RANGE_SECONDS,
   MIN_RANGE_SECONDS,
+  ZOOM_MIN_PAD_SECONDS,
   defaultRange,
   loopTarget,
   moveRangeEdge,
+  windowPercent,
+  windowTimeAt,
+  zoomWindow,
 } from '../clip-range'
 
 describe('defaultRange', () => {
@@ -70,3 +74,54 @@ describe('loopTarget', () => {
     expect(loopTarget(25, null, true)).toBeNull()
   })
 })
+
+describe('zoomWindow', () => {
+  it('pads a short range by the minimum on both sides', () => {
+    expect(zoomWindow({ start: 320, end: 340 }, 3565)).toEqual({
+      start: 320 - ZOOM_MIN_PAD_SECONDS,
+      end: 340 + ZOOM_MIN_PAD_SECONDS,
+    })
+  })
+
+  it('pads a long range by half its length', () => {
+    expect(zoomWindow({ start: 1000, end: 1200 }, 3565)).toEqual({ start: 900, end: 1300 })
+  })
+
+  it('stays inside the media at both ends', () => {
+    expect(zoomWindow({ start: 5, end: 10 }, 3565).start).toBe(0)
+    expect(zoomWindow({ start: 3550, end: 3560 }, 3565).end).toBe(3565)
+  })
+
+  it('always contains the range', () => {
+    const range = { start: 100, end: 140 }
+    const window = zoomWindow(range, 3565)
+    expect(window.start).toBeLessThan(range.start)
+    expect(window.end).toBeGreaterThan(range.end)
+  })
+})
+
+describe('window mapping', () => {
+  const window = { start: 100, end: 200 }
+
+  it('maps a time to a percentage across the window', () => {
+    expect(windowPercent(150, window)).toBe(50)
+    expect(windowPercent(100, window)).toBe(0)
+    expect(windowPercent(200, window)).toBe(100)
+  })
+
+  it('clamps times outside the window', () => {
+    expect(windowPercent(50, window)).toBe(0)
+    expect(windowPercent(500, window)).toBe(100)
+  })
+
+  it('maps a horizontal ratio back to a time, clamped to the window', () => {
+    expect(windowTimeAt(0.25, window)).toBe(125)
+    expect(windowTimeAt(-1, window)).toBe(100)
+    expect(windowTimeAt(2, window)).toBe(200)
+  })
+
+  it('is stable for a zero-length window', () => {
+    expect(windowPercent(5, { start: 5, end: 5 })).toBe(0)
+  })
+})
+
