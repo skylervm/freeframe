@@ -323,3 +323,25 @@ describe('CommentInput range: slow submissions', () => {
   })
 })
 
+describe('CommentInput range: identical replacement drafts', () => {
+  it('a late submit does not clear a range removed and drafted again at the same playhead', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    let finishSubmit: () => void = () => {}
+    const onSubmit = vi.fn().mockReturnValue(new Promise<void>((resolve) => { finishSubmit = resolve }))
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTitle('Select a range'))
+    const textarea = screen.getByPlaceholderText('Leave your comment...')
+    fireEvent.change(textarea, { target: { value: 'Clip 1' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByTitle('Remove range'))
+    fireEvent.click(screen.getByTitle('Select a range')) // same playhead, same numbers, new draft
+    finishSubmit()
+    await waitFor(() => expect(textarea).toHaveValue(''))
+
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 320, end: 325 })
+  })
+})
+

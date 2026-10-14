@@ -232,12 +232,12 @@ describe('useVideoPlayer — clip range: gestures and the end of the video', () 
       act(() => {
         useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
         useReviewStore.getState().setLoopRange(true)
-        useReviewStore.getState().setRangeGestureActive(true)
+        useReviewStore.getState().beginRangeGesture(1)
       })
       act(() => { vi.advanceTimersByTime(50) })
       expect(video.currentTime).toBe(20) // the playhead sits exactly on the end the user placed
 
-      act(() => { useReviewStore.getState().setRangeGestureActive(false) })
+      act(() => { useReviewStore.getState().endRangeGesture(1) })
       act(() => { vi.advanceTimersByTime(50) })
       expect(video.currentTime).toBe(10) // and looping resumes on release
     } finally {
@@ -270,6 +270,21 @@ describe('useVideoPlayer — clip range: gestures and the end of the video', () 
 
       expect(video.currentTime).toBe(3550)
       expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
+    })
+
+    it('does not snap back to the start while a handle is being dragged', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 3550, end: 3565 })
+        useReviewStore.getState().setLoopRange(true)
+        useReviewStore.getState().beginRangeGesture(1)
+      })
+
+      fireEvent(video, new Event('ended'))
+
+      expect(video.currentTime).toBe(0)
+      expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
     })
 
     it('leaves a normal ending alone when no range is looping', () => {

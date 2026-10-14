@@ -89,6 +89,16 @@ export function windowPercent(time: number, window: ZoomWindow): number {
 
 /** The time at horizontal position `ratio` (0..1) across the window. */
 export function windowTimeAt(ratio: number, window: ZoomWindow): number {
-  return window.start + clamp(ratio, 0, 1) * (window.end - window.start)
+  return windowTimeAtUnclamped(clamp(ratio, 0, 1), window)
+}
+
+/**
+ * Like windowTimeAt, but a position past either end of the strip maps to a time
+ * past the window. Drags need this: a handle grabbed a few pixels off its edge
+ * line must still be able to reach the very start or end, which means the
+ * pointer going beyond the strip.
+ */
+export function windowTimeAtUnclamped(ratio: number, window: ZoomWindow): number {
+  return window.start + ratio * (window.end - window.start)
 }
 

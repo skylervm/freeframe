@@ -441,10 +441,11 @@ export function CommentInput({
       setBody("");
       setMentionUserIds([]);
       const current = useReviewStore.getState();
+      // Same draft object, not just the same numbers: a range removed and drafted again at the
+      // same playhead is a new draft and must survive this older post finishing.
       if (
         submittedRange &&
-        current.pendingRange?.start === submittedRange.start &&
-        current.pendingRange?.end === submittedRange.end &&
+        current.pendingRange === submittedRange &&
         current.currentVersion?.id === submittedVersionId
       ) {
         setPendingRange(null);

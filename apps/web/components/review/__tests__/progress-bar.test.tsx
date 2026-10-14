@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render } from '@testing-library/react'
+import { act, fireEvent, render } from '@testing-library/react'
 import { useReviewStore } from '@/stores/review-store'
 import { ProgressBar } from '../progress-bar'
 
@@ -260,9 +260,9 @@ describe('ProgressBar range drag: grab offset, pointers, keyboard', () => {
   it('flags a range gesture while a handle is held, and clears it on release', () => {
     const { handle } = setup()
     fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
-    expect(useReviewStore.getState().rangeGestureActive).toBe(true)
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
     fireEvent.pointerUp(handle('end'), { pointerId: 1 })
-    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
   })
 
   it('nudges a focused handle by a frame with the arrow keys, and by a second with Shift', () => {
@@ -293,6 +293,90 @@ describe('ProgressBar range drag: grab offset, pointers, keyboard', () => {
     const { handle } = setup()
     expect(handle('start')).toHaveAttribute('tabindex', '0')
     expect(handle('end')).toHaveAttribute('tabindex', '0')
+  })
+})
+
+describe('ProgressBar range drag: reaching the ends, one gesture, cleanup', () => {
+  const xFor = (seconds: number) => 20 + 2 * seconds
+  const rect = { left: 20, top: 0, right: 220, bottom: 4, width: 200, height: 4, x: 20, y: 0, toJSON: () => ({}) }
+
+  function setup(range = { start: 10, end: 20 }) {
+    useReviewStore.getState().setPendingRange(range)
+    const onSeek = vi.fn()
+    const view = render(<ProgressBar currentTime={0} duration={100} onSeek={onSeek} />)
+    const track = view.container.querySelector('[data-testid="progress-track"]') as HTMLDivElement
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(rect)
+    const handle = (edge: 'start' | 'end') =>
+      view.container.querySelector(`[data-testid="range-handle-${edge}"]`) as HTMLElement
+    return { ...view, onSeek, handle }
+  }
+
+  it('can still drag the start all the way to 0:00 after grabbing it left of its edge', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('start'), { clientX: xFor(7), pointerId: 1 }) // 3s left of the edge
+    fireEvent.pointerMove(handle('start'), { clientX: xFor(-50), pointerId: 1 }) // pointer well past the track
+    expect(useReviewStore.getState().pendingRange?.start).toBe(0)
+  })
+
+  it('can still drag the end all the way to the end of the video after grabbing it right of its edge', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(23), pointerId: 1 }) // 3s right of the edge
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(180), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange?.end).toBe(100)
+  })
+
+  it('a gesture on the main bar blocks the zoom strip, and the other way round', () => {
+    const { container, handle, onSeek } = setup()
+    const stripTrack = container.querySelector('[data-testid="range-zoom-track"]') as HTMLDivElement
+    vi.spyOn(stripTrack, 'getBoundingClientRect').mockReturnValue({ ...rect, left: 0, right: 1000, width: 1000, x: 0 })
+    const stripHit = container.querySelector('[data-testid="range-zoom-hit-area"]') as HTMLElement
+    const stripEnd = stripTrack.querySelector('[data-testid="range-handle-end"]') as HTMLElement
+
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+    fireEvent.pointerDown(stripHit, { clientX: 500, pointerId: 2 })
+    fireEvent.pointerDown(stripEnd, { clientX: 700, pointerId: 2 })
+    fireEvent.pointerMove(stripEnd, { clientX: 900, pointerId: 2 })
+    expect(onSeek).not.toHaveBeenCalled()
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
+
+    // finger 2 lifting must not release finger 1's gesture
+    fireEvent.pointerUp(stripEnd, { pointerId: 2 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
+    fireEvent.pointerUp(handle('end'), { pointerId: 1 })
+
+    // and with the main bar idle, the strip works again
+    fireEvent.pointerDown(stripHit, { clientX: 500, pointerId: 2 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(2)
+  })
+
+  it('releases the gesture when the bar unmounts mid-drag', () => {
+    const { handle, unmount } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
+    unmount()
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+  })
+
+  it('releases a strip scrub when the bar unmounts mid-scrub', () => {
+    const { container, unmount } = setup()
+    const stripHit = container.querySelector('[data-testid="range-zoom-hit-area"]') as HTMLElement
+    fireEvent.pointerDown(stripHit, { clientX: 500, pointerId: 3 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(3)
+    unmount()
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+  })
+
+  it('removing the range mid-drag frees the gesture, so the next range can be dragged', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+    act(() => { useReviewStore.getState().setPendingRange(null) })
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+
+    act(() => { useReviewStore.getState().setPendingRange({ start: 30, end: 40 }) })
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(40), pointerId: 1 })
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(50), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 30, end: 50 })
   })
 })
 

@@ -147,9 +147,9 @@ describe('RangeZoomStrip pointers and gesture flag', () => {
     const { hitArea } = renderStrip()
 
     fireEvent.pointerDown(hitArea(), { clientX: 500, pointerId: 1 })
-    expect(useReviewStore.getState().rangeGestureActive).toBe(true)
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
     fireEvent.pointerUp(hitArea(), { pointerId: 1 })
-    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
   })
 
   it('does not jump a strip handle grabbed away from its edge', () => {
@@ -159,6 +159,19 @@ describe('RangeZoomStrip pointers and gesture flag', () => {
     fireEvent.pointerDown(handle('end'), { clientX: 740, pointerId: 1 })
     fireEvent.pointerMove(handle('end'), { clientX: 741, pointerId: 1 })
     expect(useReviewStore.getState().pendingRange?.end).toBeCloseTo(340.05, 5)
+  })
+})
+
+describe('RangeZoomStrip reaching the ends', () => {
+  it('can drag the start to the first moment of the strip window after grabbing it left of its edge', () => {
+    useReviewStore.getState().setPendingRange({ start: 320, end: 340 })
+    const { handle } = renderStrip()
+    // window 305..355 over 1000px; start edge at x=300; grab 40px (2s) left of it, drag far past the strip
+    fireEvent.pointerDown(handle('start'), { clientX: 260, pointerId: 1 })
+    fireEvent.pointerMove(handle('start'), { clientX: -500, pointerId: 1 })
+    // pointer 25s of strip-width left of the window (305 - 25 = 280), plus the 2s grab offset: the
+    // handle goes past the window's own start instead of stopping 2s short of it
+    expect(useReviewStore.getState().pendingRange?.start).toBeCloseTo(282, 5)
   })
 })
 

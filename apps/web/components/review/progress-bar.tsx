@@ -311,6 +311,17 @@ export function ProgressBar({
     [duration],
   )
 
+  // Unclamped, for handle drags (see useRangeDrag): a pointer beyond the track maps beyond the media.
+  const getRawTimeFromEvent = useCallback(
+    (clientX: number): number => {
+      const track = trackRef.current
+      if (!track || !duration) return 0
+      const rect = track.getBoundingClientRect()
+      return ((clientX - rect.left) / rect.width) * duration
+    },
+    [duration],
+  )
+
   const handlePointerMove = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const time = getTimeFromEvent(e.clientX)
@@ -363,7 +374,7 @@ export function ProgressBar({
 
   // Range handles. Dragging one moves that edge and scrubs the video to it, so
   // the frame under the handle is the frame you are choosing.
-  const { handlersFor } = useRangeDrag({ timeAt: getTimeFromEvent, duration, onSeek })
+  const { handlersFor } = useRangeDrag({ timeAt: getRawTimeFromEvent, duration, onSeek })
 
   // Separate timecoded comments
   const pointMarkers = comments.filter(

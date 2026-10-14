@@ -15,8 +15,11 @@ interface ReviewState {
   pendingRange: ClipRange | null
   /** Loop playback inside pendingRange. */
   loopRange: boolean
-  /** True while a handle is being dragged or the zoom strip scrubbed; loop playback holds off. */
-  rangeGestureActive: boolean
+  /**
+   * Pointer id of the finger or mouse currently dragging a handle or scrubbing the zoom strip,
+   * or null. One gesture at a time across both timelines; loop playback holds off while it is set.
+   */
+  rangeGesturePointer: number | null
   seekTarget: { time: number; id: number; pause?: boolean } | null
   focusedCommentId: string | null
   pendingAnnotation: Record<string, unknown> | null
@@ -32,7 +35,10 @@ interface ReviewState {
   setMediaDuration: (duration: number) => void
   setPendingRange: (range: ClipRange | null) => void
   setLoopRange: (loop: boolean) => void
-  setRangeGestureActive: (active: boolean) => void
+  /** Claim the range gesture for this pointer; false if another pointer already holds it. */
+  beginRangeGesture: (pointerId: number) => boolean
+  /** Release the gesture, only if this pointer holds it. */
+  endRangeGesture: (pointerId: number) => void
   seekTo: (time: number, pause?: boolean) => void
   setFocusedCommentId: (id: string | null) => void
   setPendingAnnotation: (data: Record<string, unknown> | null) => void
@@ -53,7 +59,7 @@ const initialState = {
   mediaDuration: 0,
   pendingRange: null as ClipRange | null,
   loopRange: false,
-  rangeGestureActive: false,
+  rangeGesturePointer: null as number | null,
   seekTarget: null,
   focusedCommentId: null,
   pendingAnnotation: null,
@@ -65,17 +71,17 @@ const initialState = {
   brushSize: 4,
 }
 
-export const useReviewStore = create<ReviewState>()((set) => ({
+export const useReviewStore = create<ReviewState>()((set, get) => ({
   ...initialState,
 
   setCurrentAsset: (asset: Asset) => {
-    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGestureActive: false, seekTarget: null })
+    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGesturePointer: null, seekTarget: null })
   },
 
   setCurrentVersion: (version: AssetVersion) => {
     set((state) =>
       state.currentVersion != null && state.currentVersion.id !== version.id
-        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGestureActive: false }
+        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGesturePointer: null }
         : { currentVersion: version },
     )
   },
@@ -95,16 +101,23 @@ export const useReviewStore = create<ReviewState>()((set) => ({
   },
 
   setPendingRange: (range: ClipRange | null) => {
-    // Leaving range mode also stops looping: there is nothing left to loop.
-    set(range ? { pendingRange: range } : { pendingRange: null, loopRange: false })
+    // Leaving range mode also stops looping and abandons any drag in progress:
+    // there is nothing left to loop or drag.
+    set(range ? { pendingRange: range } : { pendingRange: null, loopRange: false, rangeGesturePointer: null })
   },
 
   setLoopRange: (loop: boolean) => {
     set({ loopRange: loop })
   },
 
-  setRangeGestureActive: (active: boolean) => {
-    set({ rangeGestureActive: active })
+  beginRangeGesture: (pointerId: number) => {
+    if (get().rangeGesturePointer !== null) return false
+    set({ rangeGesturePointer: pointerId })
+    return true
+  },
+
+  endRangeGesture: (pointerId: number) => {
+    set((state) => (state.rangeGesturePointer === pointerId ? { rangeGesturePointer: null } : state))
   },
 
   seekTo: (time: number, pause?: boolean) => {

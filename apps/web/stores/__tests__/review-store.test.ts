@@ -165,10 +165,28 @@ describe('review store clip range: version and duration changes', () => {
     expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
   })
 
-  it('clears the gesture flag on an asset or version change', () => {
-    useReviewStore.getState().setRangeGestureActive(true)
+  it('clears the gesture on an asset or version change', () => {
+    useReviewStore.getState().beginRangeGesture(1)
     useReviewStore.getState().setCurrentAsset({ id: 'a2' } as any)
-    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+  })
+
+  it('lets one pointer own the gesture at a time, and only that pointer release it', () => {
+    const store = useReviewStore.getState()
+    expect(store.beginRangeGesture(1)).toBe(true)
+    expect(store.beginRangeGesture(2)).toBe(false)
+    store.endRangeGesture(2) // not the owner: no effect
+    expect(useReviewStore.getState().rangeGesturePointer).toBe(1)
+    store.endRangeGesture(1)
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+    expect(store.beginRangeGesture(2)).toBe(true)
+  })
+
+  it('abandons a gesture in progress when the range is removed', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    useReviewStore.getState().beginRangeGesture(1)
+    useReviewStore.getState().setPendingRange(null)
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
   })
 })
 

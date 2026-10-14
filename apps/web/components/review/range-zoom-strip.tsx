@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   windowPercent,
   windowTimeAt,
+  windowTimeAtUnclamped,
   zoomWindow,
   type ZoomWindow,
 } from '@/lib/clip-range'
@@ -39,20 +40,48 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   viewRef.current = view
   const scrubPointerRef = useRef<number | null>(null)
 
-  const timeAt = useCallback((clientX: number): number => {
+  // Unmounting mid-scrub must not leave the gesture claimed.
+  useEffect(
+    () => () => {
+      if (scrubPointerRef.current !== null) useReviewStore.getState().endRangeGesture(scrubPointerRef.current)
+    },
+    [],
+  )
+
+  // Pointer position as a ratio across the track (can be below 0 or above 1), or null before layout.
+  const ratioAt = useCallback((clientX: number): number | null => {
     const track = trackRef.current
-    const current = viewRef.current
-    if (!track || !current) return 0
+    if (!track) return null
     const rect = track.getBoundingClientRect()
-    return windowTimeAt((clientX - rect.left) / rect.width, current)
+    return (clientX - rect.left) / rect.width
   }, [])
+
+  // For scrubbing: stays inside the strip.
+  const timeAt = useCallback(
+    (clientX: number): number => {
+      const ratio = ratioAt(clientX)
+      const current = viewRef.current
+      return ratio === null || !current ? 0 : windowTimeAt(ratio, current)
+    },
+    [ratioAt],
+  )
+
+  // For dragging handles: not clamped, so a handle grabbed off its edge can still reach the ends.
+  const rawTimeAt = useCallback(
+    (clientX: number): number => {
+      const ratio = ratioAt(clientX)
+      const current = viewRef.current
+      return ratio === null || !current ? 0 : windowTimeAtUnclamped(ratio, current)
+    },
+    [ratioAt],
+  )
 
   const reframe = useCallback(() => {
     const range = useReviewStore.getState().pendingRange
     if (range) setView(zoomWindow(range, duration))
   }, [duration])
 
-  const { handlersFor, isDragging } = useRangeDrag({ timeAt, duration, onSeek, onDragEnd: reframe })
+  const { handlersFor, isDragging } = useRangeDrag({ timeAt: rawTimeAt, duration, onSeek, onDragEnd: reframe })
 
   useEffect(() => {
     if (pendingRange && !isDragging()) setView(zoomWindow(pendingRange, duration))
@@ -67,19 +96,20 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   // Pressing or dragging the strip itself (not a handle) scrubs the video, to find the frame.
   const handleScrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
-    if (scrubPointerRef.current !== null) return // another finger is already scrubbing
+    if (!useReviewStore.getState().beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
     e.currentTarget.setPointerCapture(e.pointerId)
     scrubPointerRef.current = e.pointerId
-    useReviewStore.getState().setRangeGestureActive(true)
     onSeek(timeAt(e.clientX))
   }
   const handleScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (scrubPointerRef.current === e.pointerId) onSeek(timeAt(e.clientX))
+    if (scrubPointerRef.current === e.pointerId && useReviewStore.getState().rangeGesturePointer === e.pointerId) {
+      onSeek(timeAt(e.clientX))
+    }
   }
   const endScrub = (e: React.PointerEvent<HTMLDivElement>) => {
     if (scrubPointerRef.current !== e.pointerId) return
     scrubPointerRef.current = null
-    useReviewStore.getState().setRangeGestureActive(false)
+    useReviewStore.getState().endRangeGesture(e.pointerId)
   }
 
   return (

@@ -1,12 +1,16 @@
 'use client'
 
 import type React from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { FRAME_SECONDS, moveRangeEdge, type RangeEdge } from '@/lib/clip-range'
 import { useReviewStore } from '@/stores/review-store'
 
 interface UseRangeDragOptions {
-  /** Media time under a pointer position, in the caller's own scale (full bar or zoom strip). */
+  /**
+   * Media time under a pointer position, NOT clamped to the track: a handle grabbed
+   * off its edge line must be able to reach 0 and the end, so the pointer maps
+   * beyond them. moveRangeEdge does the clamping.
+   */
   timeAt: (clientX: number) => number
   duration: number
   /** Scrub the video to the edge being dragged. */
@@ -24,19 +28,28 @@ interface ActiveDrag {
 /**
  * Pointer and keyboard handlers for a clip range's start/end edge. Shared by
  * the main progress bar and the zoom strip, which differ only in how a pointer
- * position maps to a time.
+ * position maps to a time. The store decides which single pointer owns the
+ * gesture across both, so a second finger on either timeline is ignored.
  */
 export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDragOptions) {
   // A ref, not state: pointermove must see the edge grabbed by the pointerdown
   // that just fired, before React has re-rendered.
   const activeRef = useRef<ActiveDrag | null>(null)
 
+  // Unmounting mid-drag (range removed, screen left) must not leave the gesture claimed.
+  useEffect(
+    () => () => {
+      if (activeRef.current) useReviewStore.getState().endRangeGesture(activeRef.current.pointerId)
+    },
+    [],
+  )
+
   const finish = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       // Only the pointer that owns the drag can end it; a second finger lifting does not.
       if (!activeRef.current || activeRef.current.pointerId !== e.pointerId) return
       activeRef.current = null
-      useReviewStore.getState().setRangeGestureActive(false)
+      useReviewStore.getState().endRangeGesture(e.pointerId)
       onDragEnd?.()
     },
     [onDragEnd],
@@ -48,23 +61,23 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
         // Keep the surrounding bar's own press-to-seek out of it.
         e.stopPropagation()
         e.preventDefault()
-        if (activeRef.current) return // another finger already owns a drag
-        const { pendingRange, setRangeGestureActive } = useReviewStore.getState()
+        const { pendingRange, beginRangeGesture } = useReviewStore.getState()
         if (!pendingRange) return
+        if (!beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
         e.currentTarget.setPointerCapture(e.pointerId)
         activeRef.current = {
           edge,
           pointerId: e.pointerId,
           grabOffset: timeAt(e.clientX) - pendingRange[edge],
         }
-        setRangeGestureActive(true)
       },
       onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
         const active = activeRef.current
         if (!active || active.edge !== edge || active.pointerId !== e.pointerId) return
         // Read the range at event time so a slow render never moves a stale copy.
-        const { pendingRange, setPendingRange } = useReviewStore.getState()
-        if (!pendingRange) return
+        const { pendingRange, setPendingRange, rangeGesturePointer } = useReviewStore.getState()
+        // The store drops the gesture when the range is removed or the asset changes.
+        if (!pendingRange || rangeGesturePointer !== e.pointerId) return
         const next = moveRangeEdge(pendingRange, edge, timeAt(e.clientX) - active.grabOffset, duration)
         setPendingRange(next)
         onSeek(next[edge])
@@ -90,7 +103,12 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
     [timeAt, duration, onSeek, finish],
   )
 
-  const isDragging = useCallback(() => activeRef.current !== null, [])
+  // True only while this surface's own drag is the live gesture (a stale ref after the
+  // store dropped the gesture does not count).
+  const isDragging = useCallback(
+    () => activeRef.current !== null && useReviewStore.getState().rangeGesturePointer === activeRef.current.pointerId,
+    [],
+  )
 
   return { handlersFor, isDragging }
 }
