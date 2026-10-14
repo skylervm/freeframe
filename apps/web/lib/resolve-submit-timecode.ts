@@ -32,3 +32,25 @@ export function resolveSubmitTimecode({
   if (timecodeAttached || hasAnnotation) return playheadTime;
   return undefined;
 }
+
+export interface ResolveSubmitTimecodesArgs extends ResolveSubmitTimecodeArgs {
+  /** The clip range drafted on the timeline, or null when range mode is off. */
+  range: { start: number; end: number } | null;
+}
+
+/**
+ * Start and end for a submitted comment.
+ *
+ * A drafted range wins over the clock toggle: choosing a range is itself the
+ * request to attach timecodes. A drawing wins over a range, because a drawing
+ * is pinned to one frame and cannot also span a clip.
+ */
+export function resolveSubmitTimecodes(args: ResolveSubmitTimecodesArgs): {
+  start?: number;
+  end?: number;
+} {
+  if (args.range && args.hasTimecode && !args.hasAnnotation) {
+    return { start: args.range.start, end: args.range.end };
+  }
+  return { start: resolveSubmitTimecode(args) };
+}

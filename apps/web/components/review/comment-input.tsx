@@ -18,13 +18,16 @@ import {
   Trash2,
   Globe,
   Lock,
+  ArrowLeftRight,
+  Repeat,
 } from "lucide-react";
 import { cn, formatTime, formatTimecode, formatFrames } from "@/lib/utils";
 import { useReviewStore } from "@/stores/review-store";
 import { useReview } from "./review-provider";
 import { useDrawing } from "@/hooks/use-drawing";
 import { api } from "@/lib/api";
-import { resolveSubmitTimecode } from "@/lib/resolve-submit-timecode";
+import { defaultRange } from "@/lib/clip-range";
+import { resolveSubmitTimecodes } from "@/lib/resolve-submit-timecode";
 import type { User } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -210,6 +213,11 @@ export function CommentInput({
     playheadTime: storePlayheadTime,
     timeFormat,
     pendingAnnotation,
+    pendingRange,
+    loopRange,
+    mediaDuration,
+    setPendingRange,
+    setLoopRange,
     toggleDrawingMode,
     setIsDrawingMode,
     setDrawingTool,
@@ -275,6 +283,19 @@ export function CommentInput({
 
   const canAnnotate = assetType !== "audio" && !disableAnnotations;
   const hasTimecode = assetType === "video" || assetType === "audio";
+  // Ranges are drafted on the main player's timeline, so not in compare panes
+  // (they have their own players) and not on replies.
+  const rangeAvailable =
+    assetType === "video" && playheadTimeOverride === undefined && !replyToId;
+  const rangeActive = rangeAvailable && pendingRange !== null;
+
+  function toggleRange() {
+    if (pendingRange) {
+      setPendingRange(null);
+    } else {
+      setPendingRange(defaultRange(playheadTime, mediaDuration));
+    }
+  }
 
   function displayTime(seconds: number): string {
     switch (timeFormat) {
@@ -395,17 +416,18 @@ export function CommentInput({
       // valid video time and must never be silently dropped), and is
       // force-attached whenever this submit carries a drawing: a drawing is
       // frame-anchored and must never save timecode-less on timed media.
-      const timecodeStart = resolveSubmitTimecode({
+      const { start: timecodeStart, end: timecodeEnd } = resolveSubmitTimecodes({
         hasTimecode,
         timecodeAttached,
         hasAnnotation: !!finalAnnotation,
         playheadTime,
+        range: rangeActive ? pendingRange : null,
       });
 
       await onSubmit(
         trimmed,
         timecodeStart,
-        undefined,
+        timecodeEnd,
         finalAnnotation,
         replyToId ?? undefined,
         commentVisibility,
@@ -414,6 +436,7 @@ export function CommentInput({
 
       setBody("");
       setMentionUserIds([]);
+      if (rangeActive) setPendingRange(null);
       // Drawing-state cleanup touches the SHARED singleton canvas + global store,
       // so gate it on ownership: an inactive compare pane (captureAnnotation false)
       // must NOT clear() the other pane's in-progress drawing or flip the global
@@ -458,9 +481,11 @@ export function CommentInput({
         <div className="relative">
           <div className="flex items-start gap-0 rounded-lg border border-border bg-bg-tertiary focus-within:border-accent/50 focus-within:ring-1 focus-within:ring-accent/20">
             {/* Inline timecode badge — show when timecode attached (normal mode) or in drawing mode */}
-            {hasTimecode && (timecodeAttached || drawingActive) && (
+            {hasTimecode && (timecodeAttached || drawingActive || rangeActive) && (
               <span className="shrink-0 ml-2.5 mt-[9px] rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[11px] text-amber-400 leading-none select-none">
-                {displayTime(playheadTime)}
+                {rangeActive && pendingRange && !drawingActive
+                  ? `${displayTime(pendingRange.start)} – ${displayTime(pendingRange.end)}`
+                  : displayTime(playheadTime)}
               </span>
             )}
             <textarea
@@ -582,6 +607,39 @@ export function CommentInput({
                   }
                 >
                   <Clock className="h-4 w-4" />
+                </button>
+              )}
+
+              {/* Range: drag start/end handles on the timeline instead of posting two comments */}
+              {rangeAvailable && (
+                <button
+                  className={cn(
+                    "h-7 w-7 flex items-center justify-center rounded-md transition-colors disabled:opacity-40",
+                    rangeActive
+                      ? "text-amber-400 bg-amber-400/10"
+                      : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-secondary",
+                  )}
+                  onClick={toggleRange}
+                  disabled={!rangeActive && mediaDuration <= 0}
+                  aria-pressed={rangeActive}
+                  title={rangeActive ? "Remove range" : "Select a range"}
+                >
+                  <ArrowLeftRight className="h-4 w-4" />
+                </button>
+              )}
+              {rangeActive && (
+                <button
+                  className={cn(
+                    "h-7 w-7 flex items-center justify-center rounded-md transition-colors",
+                    loopRange
+                      ? "text-amber-400 bg-amber-400/10"
+                      : "text-text-tertiary hover:bg-bg-tertiary hover:text-text-secondary",
+                  )}
+                  onClick={() => setLoopRange(!loopRange)}
+                  aria-pressed={loopRange}
+                  title={loopRange ? "Stop looping" : "Loop range"}
+                >
+                  <Repeat className="h-4 w-4" />
                 </button>
               )}
 

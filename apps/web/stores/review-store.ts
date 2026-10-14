@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Asset, AssetVersion } from '@/types'
+import type { ClipRange } from '@/lib/clip-range'
 
 type DrawingTool = 'pen' | 'rectangle' | 'arrow' | 'line'
 export type TimeFormat = 'standard' | 'timecode' | 'frames'
@@ -8,6 +9,12 @@ interface ReviewState {
   currentAsset: Asset | null
   currentVersion: AssetVersion | null
   playheadTime: number
+  /** Length of the loaded video in seconds; 0 until its metadata loads. */
+  mediaDuration: number
+  /** The clip range being drafted for the next comment, or null when range mode is off. */
+  pendingRange: ClipRange | null
+  /** Loop playback inside pendingRange. */
+  loopRange: boolean
   seekTarget: { time: number; id: number; pause?: boolean } | null
   focusedCommentId: string | null
   pendingAnnotation: Record<string, unknown> | null
@@ -20,6 +27,9 @@ interface ReviewState {
   setCurrentAsset: (asset: Asset) => void
   setCurrentVersion: (version: AssetVersion) => void
   setPlayheadTime: (time: number) => void
+  setMediaDuration: (duration: number) => void
+  setPendingRange: (range: ClipRange | null) => void
+  setLoopRange: (loop: boolean) => void
   seekTo: (time: number, pause?: boolean) => void
   setFocusedCommentId: (id: string | null) => void
   setPendingAnnotation: (data: Record<string, unknown> | null) => void
@@ -37,6 +47,9 @@ const initialState = {
   currentAsset: null,
   currentVersion: null,
   playheadTime: 0,
+  mediaDuration: 0,
+  pendingRange: null as ClipRange | null,
+  loopRange: false,
   seekTarget: null,
   focusedCommentId: null,
   pendingAnnotation: null,
@@ -52,19 +65,32 @@ export const useReviewStore = create<ReviewState>()((set) => ({
   ...initialState,
 
   setCurrentAsset: (asset: Asset) => {
-    set({ currentAsset: asset, playheadTime: 0, seekTarget: null })
+    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, seekTarget: null })
   },
 
   setCurrentVersion: (version: AssetVersion) => {
     set((state) =>
       state.currentVersion != null && state.currentVersion.id !== version.id
-        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null }
+        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, pendingRange: null, loopRange: false }
         : { currentVersion: version },
     )
   },
 
   setPlayheadTime: (time: number) => {
     set({ playheadTime: time })
+  },
+
+  setMediaDuration: (duration: number) => {
+    set({ mediaDuration: duration })
+  },
+
+  setPendingRange: (range: ClipRange | null) => {
+    // Leaving range mode also stops looping: there is nothing left to loop.
+    set(range ? { pendingRange: range } : { pendingRange: null, loopRange: false })
+  },
+
+  setLoopRange: (loop: boolean) => {
+    set({ loopRange: loop })
   },
 
   seekTo: (time: number, pause?: boolean) => {

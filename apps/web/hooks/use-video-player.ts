@@ -2,6 +2,7 @@
 
 import Hls, { type Level } from 'hls.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { loopTarget } from '@/lib/clip-range'
 import { useReviewStore } from '@/stores/review-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -61,7 +62,8 @@ export function useVideoPlayer(
   const hlsRef = useRef<Hls | null>(null)
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  const { setPlayheadTime, seekTarget, setActiveAnnotation } = useReviewStore()
+  const { setPlayheadTime, setMediaDuration, seekTarget, setActiveAnnotation } = useReviewStore()
+  const loopActive = useReviewStore((state) => state.loopRange && state.pendingRange !== null)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -89,6 +91,24 @@ export function useVideoPlayer(
       if (syncIntervalRef.current) clearInterval(syncIntervalRef.current)
     }
   }, [setPlayheadTime, detached])
+
+  // Loop the drafted clip range. `timeupdate` only fires ~4x a second, which would
+  // overshoot the end by up to 250ms, so check every frame while looping is on.
+  useEffect(() => {
+    if (detached || !loopActive) return
+    let frame = 0
+    const tick = () => {
+      const video = videoRef.current
+      if (video && !video.paused) {
+        const { pendingRange, loopRange } = useReviewStore.getState()
+        const target = loopTarget(video.currentTime, pendingRange, loopRange)
+        if (target !== null) video.currentTime = target
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [loopActive, detached])
 
   // React to external seek requests (e.g. clicking comment timecode)
   useEffect(() => {
@@ -145,6 +165,7 @@ export function useVideoPlayer(
 
     const onLoadedMetadata = () => {
       setDuration(video.duration)
+      if (!detached) setMediaDuration(video.duration)
       setIsLoading(false)
     }
 
@@ -253,7 +274,7 @@ export function useVideoPlayer(
         hlsRef.current = null
       }
     }
-  }, [src, setPlayheadTime])
+  }, [src, setPlayheadTime, setMediaDuration])
 
   // ─── Controls ───────────────────────────────────────────────────────────────
 

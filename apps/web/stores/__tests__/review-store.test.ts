@@ -95,3 +95,44 @@ describe('Review store', () => {
     expect(state.focusedCommentId).toBe('c1')
   })
 })
+
+describe('review store clip range', () => {
+  beforeEach(() => {
+    useReviewStore.getState().reset()
+  })
+
+  it('clears the drafted range and loop when the asset changes', () => {
+    const store = useReviewStore.getState()
+    store.setMediaDuration(120)
+    store.setPendingRange({ start: 10, end: 20 })
+    store.setLoopRange(true)
+
+    store.setCurrentAsset({ id: 'asset-2' } as any)
+
+    const state = useReviewStore.getState()
+    expect(state.pendingRange).toBeNull()
+    expect(state.loopRange).toBe(false)
+    expect(state.mediaDuration).toBe(0)
+  })
+
+  it('clears the drafted range when the version changes, not on re-selecting the same one', () => {
+    const v1 = { id: 'v1', version_number: 1 } as any
+    const v2 = { id: 'v2', version_number: 2 } as any
+    useReviewStore.getState().setCurrentVersion(v1)
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+
+    useReviewStore.getState().setCurrentVersion(v1)
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+
+    useReviewStore.getState().setCurrentVersion(v2)
+    expect(useReviewStore.getState().pendingRange).toBeNull()
+  })
+
+  it('turns looping off when the range is cleared', () => {
+    const store = useReviewStore.getState()
+    store.setPendingRange({ start: 10, end: 20 })
+    store.setLoopRange(true)
+    store.setPendingRange(null)
+    expect(useReviewStore.getState().loopRange).toBe(false)
+  })
+})

@@ -212,3 +212,81 @@ describe('CommentInput compare drawing props (annotationActive / onToggleAnnotat
     expect(screen.getByTitle('Draw annotation').className).not.toContain('text-accent')
   })
 })
+
+describe('CommentInput range', () => {
+  function renderVideoInput(onSubmit = vi.fn().mockResolvedValue(undefined), extra = {}) {
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} {...extra} />)
+    return onSubmit
+  }
+
+  it('cannot start a range until the video duration is known', () => {
+    renderVideoInput()
+    expect(screen.getByTitle('Select a range')).toBeDisabled()
+  })
+
+  it('drafts a range at the playhead and posts both ends in one comment', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    const onSubmit = renderVideoInput()
+
+    fireEvent.click(screen.getByTitle('Select a range'))
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 320, end: 325 })
+
+    await typeAndSubmit('Clip 1')
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    const [body, timecodeStart, timecodeEnd] = onSubmit.mock.calls[0]
+    expect(body).toBe('Clip 1')
+    expect(timecodeStart).toBe(320)
+    expect(timecodeEnd).toBe(325)
+    expect(useReviewStore.getState().pendingRange).toBeNull()
+  })
+
+  it('posts the range the handles were dragged to, not the playhead', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    const onSubmit = renderVideoInput()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    useReviewStore.getState().setPendingRange({ start: 322.5, end: 340.25 })
+
+    await typeAndSubmit('Clip 1')
+
+    expect(onSubmit.mock.calls[0][1]).toBe(322.5)
+    expect(onSubmit.mock.calls[0][2]).toBe(340.25)
+  })
+
+  it('removing the range sends a plain point comment again', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 12 })
+    const onSubmit = renderVideoInput()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    fireEvent.click(screen.getByTitle('Remove range'))
+
+    await typeAndSubmit('just a note')
+
+    expect(onSubmit.mock.calls[0][1]).toBe(12)
+    expect(onSubmit.mock.calls[0][2]).toBeUndefined()
+  })
+
+  it('the loop button flips loopRange and only shows while a range exists', () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 12 })
+    renderVideoInput()
+    expect(screen.queryByTitle('Loop range')).toBeNull()
+
+    fireEvent.click(screen.getByTitle('Select a range'))
+    fireEvent.click(screen.getByTitle('Loop range'))
+    expect(useReviewStore.getState().loopRange).toBe(true)
+  })
+
+  it('offers no range on audio, in compare panes, or on replies', () => {
+    useReviewStore.setState({ mediaDuration: 3000 })
+    const { unmount } = render(<CommentInput assetId="a1" projectId="p1" assetType="audio" onSubmit={vi.fn()} />)
+    expect(screen.queryByTitle('Select a range')).toBeNull()
+    unmount()
+
+    const compare = render(<CommentInput assetId="a1" projectId="p1" assetType="video" playheadTimeOverride={5} onSubmit={vi.fn()} />)
+    expect(screen.queryByTitle('Select a range')).toBeNull()
+    compare.unmount()
+
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" replyToId="c1" onSubmit={vi.fn()} />)
+    expect(screen.queryByTitle('Select a range')).toBeNull()
+  })
+})
+

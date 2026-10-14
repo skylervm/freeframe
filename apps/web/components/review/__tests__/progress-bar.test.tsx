@@ -120,3 +120,83 @@ describe('ProgressBar inset touch target', () => {
     expect(marker.parentElement?.parentElement).toHaveClass('px-3', 'md:px-0')
   })
 })
+
+describe('ProgressBar range handles', () => {
+  // Same geometry as renderProgressBar: track left=20, width=200, duration=100,
+  // so clientX = 20 + 2 * seconds.
+  const xFor = (seconds: number) => 20 + 2 * seconds
+
+  it('shows no handles until a range is drafted', () => {
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={vi.fn()} />)
+    expect(container.querySelector('[data-testid="range-handle-start"]')).toBeNull()
+  })
+
+  it('shows both handles at the drafted range, with slider values', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={vi.fn()} />)
+
+    const start = container.querySelector('[data-testid="range-handle-start"]') as HTMLElement
+    const end = container.querySelector('[data-testid="range-handle-end"]') as HTMLElement
+    expect(start).toHaveAttribute('aria-valuenow', '10')
+    expect(end).toHaveAttribute('aria-valuenow', '20')
+    expect(start.style.left).toBe('10%')
+    expect(end.style.left).toBe('20%')
+    expect(container.querySelector('[data-testid="pending-range-band"]')).toBeTruthy()
+  })
+
+  it('dragging the end handle moves the end and scrubs the video to it', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    const onSeek = vi.fn()
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={onSeek} />)
+    const track = container.querySelector('[data-testid="progress-track"]') as HTMLDivElement
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      left: 20, top: 0, right: 220, bottom: 4, width: 200, height: 4, x: 20, y: 0, toJSON: () => ({}),
+    })
+    const end = container.querySelector('[data-testid="range-handle-end"]') as HTMLElement
+
+    fireEvent.pointerDown(end, { clientX: xFor(20), pointerId: 1, pointerType: 'touch' })
+    expect(onSeek).not.toHaveBeenCalled() // grabbing a handle must not also seek the bar
+    fireEvent.pointerMove(end, { clientX: xFor(60), pointerId: 1, pointerType: 'touch' })
+
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 60 })
+    expect(onSeek).toHaveBeenLastCalledWith(60)
+  })
+
+  it('the start handle cannot be dragged past the end', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    const onSeek = vi.fn()
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={onSeek} />)
+    const track = container.querySelector('[data-testid="progress-track"]') as HTMLDivElement
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      left: 20, top: 0, right: 220, bottom: 4, width: 200, height: 4, x: 20, y: 0, toJSON: () => ({}),
+    })
+    const start = container.querySelector('[data-testid="range-handle-start"]') as HTMLElement
+
+    fireEvent.pointerDown(start, { clientX: xFor(10), pointerId: 1, pointerType: 'touch' })
+    fireEvent.pointerMove(start, { clientX: xFor(50), pointerId: 1, pointerType: 'touch' })
+
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 19.5, end: 20 })
+    expect(onSeek).toHaveBeenLastCalledWith(19.5)
+  })
+
+  it('ignores movement before a handle is grabbed and after it is released', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    const onSeek = vi.fn()
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={onSeek} />)
+    const track = container.querySelector('[data-testid="progress-track"]') as HTMLDivElement
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      left: 20, top: 0, right: 220, bottom: 4, width: 200, height: 4, x: 20, y: 0, toJSON: () => ({}),
+    })
+    const end = container.querySelector('[data-testid="range-handle-end"]') as HTMLElement
+
+    fireEvent.pointerMove(end, { clientX: xFor(40), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+
+    fireEvent.pointerDown(end, { clientX: xFor(20), pointerId: 1 })
+    fireEvent.pointerUp(end, { clientX: xFor(20), pointerId: 1 })
+    fireEvent.pointerMove(end, { clientX: xFor(80), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+    expect(onSeek).not.toHaveBeenCalled()
+  })
+})
+

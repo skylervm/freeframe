@@ -153,3 +153,70 @@ describe('useVideoPlayer fullscreen', () => {
     expect(requestFullscreen).toHaveBeenCalledOnce()
   })
 })
+
+describe('useVideoPlayer — clip range', () => {
+  it('loops back to the range start when playback reaches the end', () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC))
+      const video = { currentTime: 25, paused: false } as unknown as HTMLVideoElement
+      attach(result.current.videoRef, video)
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+        useReviewStore.getState().setLoopRange(true)
+      })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(10)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not touch playback when looping is off', () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC))
+      const video = { currentTime: 25, paused: false } as unknown as HTMLVideoElement
+      attach(result.current.videoRef, video)
+      act(() => { useReviewStore.getState().setPendingRange({ start: 10, end: 20 }) })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not loop a paused video', () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC))
+      const video = { currentTime: 25, paused: true } as unknown as HTMLVideoElement
+      attach(result.current.videoRef, video)
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+        useReviewStore.getState().setLoopRange(true)
+      })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a detached compare pane never loops against the global range', () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC, { detached: true }))
+      const video = { currentTime: 25, paused: false } as unknown as HTMLVideoElement
+      attach(result.current.videoRef, video)
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+        useReviewStore.getState().setLoopRange(true)
+      })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(25)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

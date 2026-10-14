@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Hls from 'hls.js'
+import { moveRangeEdge, type RangeEdge } from '@/lib/clip-range'
 import { cn, formatTimecode } from '@/lib/utils'
 import { useReviewStore } from '@/stores/review-store'
 import type { Comment } from '@/types'
@@ -285,6 +286,11 @@ export function ProgressBar({
   const [hoverX, setHoverX] = useState(0)
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null)
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId)
+  const pendingRange = useReviewStore((s) => s.pendingRange)
+  const setPendingRange = useReviewStore((s) => s.setPendingRange)
+  // A ref, not state: pointermove must see the edge grabbed by the pointerdown
+  // that just fired, before React has re-rendered.
+  const draggingEdgeRef = useRef<RangeEdge | null>(null)
 
   const { previewImage, seekPreview, clearPreview } = useFramePreview(streamUrl)
 
@@ -357,6 +363,33 @@ export function ProgressBar({
     [isDragging, getTimeFromEvent, onSeek, finishDragging],
   )
 
+  // Range handles. Dragging one moves that edge and scrubs the video to it, so
+  // the frame under the handle is the frame you are choosing.
+  const handleRangePointerDown = useCallback(
+    (edge: RangeEdge) => (e: React.PointerEvent<HTMLDivElement>) => {
+      // Keep the bar's own press-to-seek out of it.
+      e.stopPropagation()
+      e.preventDefault()
+      e.currentTarget.setPointerCapture(e.pointerId)
+      draggingEdgeRef.current = edge
+    },
+    [],
+  )
+
+  const handleRangePointerMove = useCallback(
+    (edge: RangeEdge) => (e: React.PointerEvent<HTMLDivElement>) => {
+      if (draggingEdgeRef.current !== edge || !pendingRange) return
+      const next = moveRangeEdge(pendingRange, edge, getTimeFromEvent(e.clientX), duration)
+      setPendingRange(next)
+      onSeek(next[edge])
+    },
+    [pendingRange, getTimeFromEvent, duration, setPendingRange, onSeek],
+  )
+
+  const finishRangeDrag = useCallback(() => {
+    draggingEdgeRef.current = null
+  }, [])
+
   // Separate timecoded comments
   const pointMarkers = comments.filter(
     (c) => c.timecode_start !== null && c.timecode_end === null && !c.resolved,
@@ -421,11 +454,51 @@ export function ProgressBar({
             }}
           />
 
+          {/* Range being drafted for the next comment */}
+          {pendingRange && duration > 0 && (
+            <div
+              data-testid="pending-range-band"
+              className="absolute inset-y-0 rounded-full bg-amber-400/70 pointer-events-none"
+              style={{
+                left: `${timeToPercent(pendingRange.start)}%`,
+                width: `${timeToPercent(pendingRange.end) - timeToPercent(pendingRange.start)}%`,
+              }}
+            />
+          )}
+
           {/* Playhead thumb */}
           <div
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-accent shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity pointer-events-none z-10"
             style={{ left: `${playPercent}%`, transform: 'translateX(-50%) translateY(-50%)' }}
           />
+
+          {/* Range handles. The start handle's grab area sits to the LEFT of the
+              start line and the end handle's to the RIGHT of the end line, so a
+              short range never leaves them overlapping. */}
+          {pendingRange && duration > 0 &&
+            (['start', 'end'] as const).map((edge) => (
+              <div
+                key={edge}
+                role="slider"
+                aria-label={edge === 'start' ? 'Range start' : 'Range end'}
+                aria-valuemin={0}
+                aria-valuemax={duration}
+                aria-valuenow={pendingRange[edge]}
+                data-testid={`range-handle-${edge}`}
+                className={cn(
+                  'absolute top-1/2 z-20 flex h-11 w-11 -translate-y-1/2 cursor-ew-resize touch-none items-center md:h-8 md:w-8',
+                  edge === 'start' ? '-translate-x-full justify-end' : 'justify-start',
+                )}
+                style={{ left: `${timeToPercent(pendingRange[edge])}%` }}
+                onPointerDown={handleRangePointerDown(edge)}
+                onPointerMove={handleRangePointerMove(edge)}
+                onPointerUp={finishRangeDrag}
+                onPointerCancel={finishRangeDrag}
+                onLostPointerCapture={finishRangeDrag}
+              >
+                <div className="h-4 w-1.5 rounded-sm bg-amber-400 shadow-lg" />
+              </div>
+            ))}
 
           {/* Frame preview + time tooltip — anchored to the visual track.
               -top-3 keeps it exactly where it sat when it was a child of the
