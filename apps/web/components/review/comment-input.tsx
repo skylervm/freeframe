@@ -416,6 +416,10 @@ export function CommentInput({
       // valid video time and must never be silently dropped), and is
       // force-attached whenever this submit carries a drawing: a drawing is
       // frame-anchored and must never save timecode-less on timed media.
+      // Remember which draft this submit used. The post is awaited, and the reviewer may
+      // draft a new range (or move to another version) before it returns.
+      const submittedRange = rangeActive ? pendingRange : null;
+      const submittedVersionId = useReviewStore.getState().currentVersion?.id;
       const { start: timecodeStart, end: timecodeEnd } = resolveSubmitTimecodes({
         hasTimecode,
         timecodeAttached,
@@ -436,7 +440,15 @@ export function CommentInput({
 
       setBody("");
       setMentionUserIds([]);
-      if (rangeActive) setPendingRange(null);
+      const current = useReviewStore.getState();
+      if (
+        submittedRange &&
+        current.pendingRange?.start === submittedRange.start &&
+        current.pendingRange?.end === submittedRange.end &&
+        current.currentVersion?.id === submittedVersionId
+      ) {
+        setPendingRange(null);
+      }
       // Drawing-state cleanup touches the SHARED singleton canvas + global store,
       // so gate it on ownership: an inactive compare pane (captureAnnotation false)
       // must NOT clear() the other pane's in-progress drawing or flip the global

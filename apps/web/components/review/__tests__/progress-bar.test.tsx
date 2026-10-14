@@ -200,3 +200,99 @@ describe('ProgressBar range handles', () => {
   })
 })
 
+describe('ProgressBar range drag: grab offset, pointers, keyboard', () => {
+  const xFor = (seconds: number) => 20 + 2 * seconds
+
+  function setup(range = { start: 10, end: 20 }) {
+    useReviewStore.getState().setPendingRange(range)
+    const onSeek = vi.fn()
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={onSeek} />)
+    const track = container.querySelector('[data-testid="progress-track"]') as HTMLDivElement
+    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue({
+      left: 20, top: 0, right: 220, bottom: 4, width: 200, height: 4, x: 20, y: 0, toJSON: () => ({}),
+    })
+    const handle = (edge: 'start' | 'end') =>
+      container.querySelector(`[data-testid="range-handle-${edge}"]`) as HTMLElement
+    return { onSeek, handle }
+  }
+
+  it('does not jump the edge when a handle is grabbed away from its edge line', () => {
+    const { handle, onSeek } = setup()
+    // the end handle's grab area sits to the right of the edge: press 3s past it, then move 1s
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(23), pointerId: 1 })
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(24), pointerId: 1 })
+
+    expect(useReviewStore.getState().pendingRange?.end).toBe(21)
+    expect(onSeek).toHaveBeenLastCalledWith(21)
+  })
+
+  it('keeps the grab offset for the start handle too (grabbed to the left of its edge)', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('start'), { clientX: xFor(7), pointerId: 1 })
+    fireEvent.pointerMove(handle('start'), { clientX: xFor(8), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange?.start).toBe(11)
+  })
+
+  it('a second finger cannot take over or end the first finger\'s drag', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+
+    fireEvent.pointerDown(handle('start'), { clientX: xFor(10), pointerId: 2 })
+    fireEvent.pointerMove(handle('start'), { clientX: xFor(15), pointerId: 2 })
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+
+    fireEvent.pointerUp(handle('start'), { pointerId: 2 })
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(30), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange?.end).toBe(30) // finger 1 still owns the drag
+
+    fireEvent.pointerUp(handle('end'), { pointerId: 1 })
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(40), pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange?.end).toBe(30)
+  })
+
+  it('ignores movement from a second finger on the very handle the first finger holds', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+    fireEvent.pointerMove(handle('end'), { clientX: xFor(60), pointerId: 2 })
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+  })
+
+  it('flags a range gesture while a handle is held, and clears it on release', () => {
+    const { handle } = setup()
+    fireEvent.pointerDown(handle('end'), { clientX: xFor(20), pointerId: 1 })
+    expect(useReviewStore.getState().rangeGestureActive).toBe(true)
+    fireEvent.pointerUp(handle('end'), { pointerId: 1 })
+    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+  })
+
+  it('nudges a focused handle by a frame with the arrow keys, and by a second with Shift', () => {
+    const { handle, onSeek } = setup()
+    fireEvent.keyDown(handle('end'), { key: 'ArrowRight' })
+    expect(useReviewStore.getState().pendingRange?.end).toBeCloseTo(20 + 1 / 24, 6)
+    expect(onSeek).toHaveBeenLastCalledWith(expect.closeTo(20 + 1 / 24, 6))
+
+    fireEvent.keyDown(handle('start'), { key: 'ArrowLeft', shiftKey: true })
+    expect(useReviewStore.getState().pendingRange?.start).toBe(9)
+  })
+
+  it('keeps the arrow keys away from the player\'s own shortcuts while a handle has focus', () => {
+    const { handle } = setup()
+    const playerShortcut = vi.fn()
+    window.addEventListener('keydown', playerShortcut)
+    try {
+      fireEvent.keyDown(handle('end'), { key: 'ArrowRight' })
+      expect(playerShortcut).not.toHaveBeenCalled()
+      fireEvent.keyDown(handle('end'), { key: 'a' }) // other keys are left alone
+      expect(playerShortcut).toHaveBeenCalledTimes(1)
+    } finally {
+      window.removeEventListener('keydown', playerShortcut)
+    }
+  })
+
+  it('makes each handle focusable', () => {
+    const { handle } = setup()
+    expect(handle('start')).toHaveAttribute('tabindex', '0')
+    expect(handle('end')).toHaveAttribute('tabindex', '0')
+  })
+})
+

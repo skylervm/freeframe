@@ -126,3 +126,39 @@ describe('ProgressBar zoom strip', () => {
     expect(container.querySelector('[data-testid="range-zoom-strip"]')).toBeNull()
   })
 })
+
+describe('RangeZoomStrip pointers and gesture flag', () => {
+  it('scrubbing belongs to one finger: a second touch neither scrubs nor ends it', () => {
+    useReviewStore.getState().setPendingRange({ start: 320, end: 340 })
+    const { hitArea, onSeek } = renderStrip()
+
+    fireEvent.pointerDown(hitArea(), { clientX: 500, pointerId: 1 })
+    fireEvent.pointerDown(hitArea(), { clientX: 100, pointerId: 2 })
+    fireEvent.pointerMove(hitArea(), { clientX: 100, pointerId: 2 })
+    expect(onSeek).toHaveBeenCalledTimes(1)
+
+    fireEvent.pointerUp(hitArea(), { pointerId: 2 })
+    fireEvent.pointerMove(hitArea(), { clientX: 600, pointerId: 1 })
+    expect(onSeek).toHaveBeenLastCalledWith(335) // finger 1 is still scrubbing
+  })
+
+  it('flags a range gesture for the whole scrub so looping holds off', () => {
+    useReviewStore.getState().setPendingRange({ start: 320, end: 340 })
+    const { hitArea } = renderStrip()
+
+    fireEvent.pointerDown(hitArea(), { clientX: 500, pointerId: 1 })
+    expect(useReviewStore.getState().rangeGestureActive).toBe(true)
+    fireEvent.pointerUp(hitArea(), { pointerId: 1 })
+    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+  })
+
+  it('does not jump a strip handle grabbed away from its edge', () => {
+    useReviewStore.getState().setPendingRange({ start: 320, end: 340 })
+    const { handle } = renderStrip()
+    // end edge is at x=700 on a 50s/1000px window; grab 40px (2s) to its right, then move 1px
+    fireEvent.pointerDown(handle('end'), { clientX: 740, pointerId: 1 })
+    fireEvent.pointerMove(handle('end'), { clientX: 741, pointerId: 1 })
+    expect(useReviewStore.getState().pendingRange?.end).toBeCloseTo(340.05, 5)
+  })
+})
+

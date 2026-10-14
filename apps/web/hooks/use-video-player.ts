@@ -100,8 +100,10 @@ export function useVideoPlayer(
     const tick = () => {
       const video = videoRef.current
       if (video && !video.paused) {
-        const { pendingRange, loopRange } = useReviewStore.getState()
-        const target = loopTarget(video.currentTime, pendingRange, loopRange)
+        const { pendingRange, loopRange, rangeGestureActive } = useReviewStore.getState()
+        // While a handle is dragged or the strip scrubbed the user is placing the playhead
+        // on purpose, often right at the end; looping then would snap it away.
+        const target = rangeGestureActive ? null : loopTarget(video.currentTime, pendingRange, loopRange)
         if (target !== null) video.currentTime = target
       }
       frame = requestAnimationFrame(tick)
@@ -165,7 +167,7 @@ export function useVideoPlayer(
 
     const onLoadedMetadata = () => {
       setDuration(video.duration)
-      if (!detached) setMediaDuration(video.duration)
+      if (!detached && Number.isFinite(video.duration)) setMediaDuration(video.duration)
       setIsLoading(false)
     }
 
@@ -186,6 +188,16 @@ export function useVideoPlayer(
       setIsMuted(video.muted)
     }
     const onEnded = () => {
+      // A range that ends at the very end of the video: the browser stops (and pauses)
+      // before the per-frame loop check can restart it.
+      const { loopRange, pendingRange } = useReviewStore.getState()
+      if (!detached && loopRange && pendingRange) {
+        video.currentTime = pendingRange.start
+        video.play().catch(() => {
+          // Autoplay may be blocked; ignore
+        })
+        return
+      }
       setIsPlaying(false)
       if (!detached) setPlayheadTime(video.duration)
     }

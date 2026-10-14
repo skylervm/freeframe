@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { useReviewStore } from '@/stores/review-store'
 
 // CommentInput calls useReview() unconditionally; mirror the minimal shape
@@ -287,6 +287,39 @@ describe('CommentInput range', () => {
 
     render(<CommentInput assetId="a1" projectId="p1" assetType="video" replyToId="c1" onSubmit={vi.fn()} />)
     expect(screen.queryByTitle('Select a range')).toBeNull()
+  })
+})
+
+describe('CommentInput range: slow submissions', () => {
+  it('a submit that finishes late does not clear a range drafted in the meantime', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    let finishSubmit: () => void = () => {}
+    const onSubmit = vi.fn().mockReturnValue(new Promise<void>((resolve) => { finishSubmit = resolve }))
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByTitle('Select a range'))
+    const textarea = screen.getByPlaceholderText('Leave your comment...')
+    fireEvent.change(textarea, { target: { value: 'Clip 1' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+
+    // while the post is in flight the reviewer drafts the next clip
+    act(() => { useReviewStore.getState().setPendingRange({ start: 500, end: 520 }) })
+    finishSubmit()
+    await waitFor(() => expect(textarea).toHaveValue(''))
+
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 500, end: 520 })
+  })
+
+  it('still clears the draft that was actually submitted', async () => {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} />)
+    fireEvent.click(screen.getByTitle('Select a range'))
+
+    await typeAndSubmit('Clip 1')
+
+    expect(useReviewStore.getState().pendingRange).toBeNull()
   })
 })
 

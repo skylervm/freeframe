@@ -13,6 +13,9 @@ export type RangeEdge = 'start' | 'end'
 /** How long a freshly created range is, before the user drags it. */
 export const DEFAULT_RANGE_SECONDS = 5
 
+/** One frame at the app's fixed 24fps (see formatTimecode); the keyboard nudge step. */
+export const FRAME_SECONDS = 1 / 24
+
 /** The two handles can never be closer than this (also keeps end > start). */
 export const MIN_RANGE_SECONDS = 0.5
 

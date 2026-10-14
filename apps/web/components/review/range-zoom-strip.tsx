@@ -37,7 +37,7 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   // Pointer handlers read the current view through a ref, not a stale closure.
   const viewRef = useRef(view)
   viewRef.current = view
-  const scrubbingRef = useRef(false)
+  const scrubPointerRef = useRef<number | null>(null)
 
   const timeAt = useCallback((clientX: number): number => {
     const track = trackRef.current
@@ -67,19 +67,25 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   // Pressing or dragging the strip itself (not a handle) scrubs the video, to find the frame.
   const handleScrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
+    if (scrubPointerRef.current !== null) return // another finger is already scrubbing
     e.currentTarget.setPointerCapture(e.pointerId)
-    scrubbingRef.current = true
+    scrubPointerRef.current = e.pointerId
+    useReviewStore.getState().setRangeGestureActive(true)
     onSeek(timeAt(e.clientX))
   }
   const handleScrubMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (scrubbingRef.current) onSeek(timeAt(e.clientX))
+    if (scrubPointerRef.current === e.pointerId) onSeek(timeAt(e.clientX))
   }
-  const endScrub = () => {
-    scrubbingRef.current = false
+  const endScrub = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (scrubPointerRef.current !== e.pointerId) return
+    scrubPointerRef.current = null
+    useReviewStore.getState().setRangeGestureActive(false)
   }
 
   return (
-    <div data-testid="range-zoom-strip" className={cn('w-full px-3 md:px-0', className)}>
+    // Wider side padding than the main bar: a handle at the very start or end of the
+    // media has its grab area outside the track, and the viewer clips anything past the edge.
+    <div data-testid="range-zoom-strip" className={cn('w-full px-6 md:px-8', className)}>
       <div
         data-testid="range-zoom-hit-area"
         className="relative w-full cursor-pointer touch-none py-3 md:py-2"

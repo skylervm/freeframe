@@ -1,5 +1,6 @@
+import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, render, fireEvent } from '@testing-library/react'
 import { useReviewStore } from '@/stores/review-store'
 import { useVideoPlayer } from '../use-video-player'
 
@@ -218,5 +219,68 @@ describe('useVideoPlayer — clip range', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('useVideoPlayer — clip range: gestures and the end of the video', () => {
+  it('holds the loop off while a handle is being dragged', () => {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC))
+      const video = { currentTime: 20, paused: false } as unknown as HTMLVideoElement
+      attach(result.current.videoRef, video)
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+        useReviewStore.getState().setLoopRange(true)
+        useReviewStore.getState().setRangeGestureActive(true)
+      })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(20) // the playhead sits exactly on the end the user placed
+
+      act(() => { useReviewStore.getState().setRangeGestureActive(false) })
+      act(() => { vi.advanceTimersByTime(50) })
+      expect(video.currentTime).toBe(10) // and looping resumes on release
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  describe('when the video ends', () => {
+    function PlayerHarness({ detached = false }: { detached?: boolean }) {
+      const { videoRef } = useVideoPlayer('http://example.test/v.mp4', { detached })
+      return React.createElement('video', { ref: videoRef, 'data-testid': 'video' })
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+        configurable: true,
+        value: vi.fn().mockResolvedValue(undefined),
+      })
+    })
+
+    it('restarts a range that runs to the end of the video', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      act(() => {
+        useReviewStore.getState().setPendingRange({ start: 3550, end: 3565 })
+        useReviewStore.getState().setLoopRange(true)
+      })
+
+      fireEvent(video, new Event('ended'))
+
+      expect(video.currentTime).toBe(3550)
+      expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
+    })
+
+    it('leaves a normal ending alone when no range is looping', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      act(() => { useReviewStore.getState().setPendingRange({ start: 3550, end: 3565 }) })
+
+      fireEvent(video, new Event('ended'))
+
+      expect(video.currentTime).toBe(0)
+      expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled()
+    })
   })
 })

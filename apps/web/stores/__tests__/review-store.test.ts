@@ -136,3 +136,39 @@ describe('review store clip range', () => {
     expect(useReviewStore.getState().loopRange).toBe(false)
   })
 })
+
+describe('review store clip range: version and duration changes', () => {
+  beforeEach(() => {
+    useReviewStore.getState().reset()
+  })
+
+  it('forgets the old video length when the version changes, so no range is drafted against it', () => {
+    const v1 = { id: 'v1', version_number: 1 } as any
+    const v2 = { id: 'v2', version_number: 2 } as any
+    useReviewStore.getState().setCurrentVersion(v1)
+    useReviewStore.getState().setMediaDuration(3000)
+
+    useReviewStore.getState().setCurrentVersion(v2)
+
+    expect(useReviewStore.getState().mediaDuration).toBe(0)
+  })
+
+  it('drops a draft that runs past the end of the video that just loaded, and keeps a valid one', () => {
+    useReviewStore.getState().setPendingRange({ start: 2990, end: 2995 })
+    useReviewStore.getState().setLoopRange(true)
+    useReviewStore.getState().setMediaDuration(100)
+    expect(useReviewStore.getState().pendingRange).toBeNull()
+    expect(useReviewStore.getState().loopRange).toBe(false)
+
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    useReviewStore.getState().setMediaDuration(100)
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
+  })
+
+  it('clears the gesture flag on an asset or version change', () => {
+    useReviewStore.getState().setRangeGestureActive(true)
+    useReviewStore.getState().setCurrentAsset({ id: 'a2' } as any)
+    expect(useReviewStore.getState().rangeGestureActive).toBe(false)
+  })
+})
+

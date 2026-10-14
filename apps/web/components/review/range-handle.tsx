@@ -14,9 +14,10 @@ interface RangeHandleProps {
   handlers: {
     onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
     onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => void
-    onPointerUp: () => void
-    onPointerCancel: () => void
-    onLostPointerCapture: () => void
+    onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => void
+    onPointerCancel: (e: React.PointerEvent<HTMLDivElement>) => void
+    onLostPointerCapture: (e: React.PointerEvent<HTMLDivElement>) => void
+    onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void
   }
 }
 
@@ -34,14 +35,15 @@ export function RangeHandle({ edge, time, duration, leftPercent, handlers }: Ran
       aria-valuemax={duration}
       aria-valuenow={time}
       data-testid={`range-handle-${edge}`}
+      tabIndex={0}
       className={cn(
-        'absolute top-1/2 z-20 flex h-11 w-11 -translate-y-1/2 cursor-ew-resize touch-none items-center md:h-8 md:w-8',
+        'group absolute top-1/2 z-20 flex h-11 w-11 -translate-y-1/2 cursor-ew-resize touch-none items-center md:h-8 md:w-8',
         edge === 'start' ? '-translate-x-full justify-end' : 'justify-start',
       )}
       style={{ left: `${leftPercent}%` }}
       {...handlers}
     >
-      <div className="h-4 w-1.5 rounded-sm bg-amber-400 shadow-lg" />
+      <div className="h-4 w-1.5 rounded-sm bg-amber-400 shadow-lg group-focus-visible:ring-2 group-focus-visible:ring-white" />
     </div>
   )
 }

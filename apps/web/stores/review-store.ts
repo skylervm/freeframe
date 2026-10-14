@@ -15,6 +15,8 @@ interface ReviewState {
   pendingRange: ClipRange | null
   /** Loop playback inside pendingRange. */
   loopRange: boolean
+  /** True while a handle is being dragged or the zoom strip scrubbed; loop playback holds off. */
+  rangeGestureActive: boolean
   seekTarget: { time: number; id: number; pause?: boolean } | null
   focusedCommentId: string | null
   pendingAnnotation: Record<string, unknown> | null
@@ -30,6 +32,7 @@ interface ReviewState {
   setMediaDuration: (duration: number) => void
   setPendingRange: (range: ClipRange | null) => void
   setLoopRange: (loop: boolean) => void
+  setRangeGestureActive: (active: boolean) => void
   seekTo: (time: number, pause?: boolean) => void
   setFocusedCommentId: (id: string | null) => void
   setPendingAnnotation: (data: Record<string, unknown> | null) => void
@@ -50,6 +53,7 @@ const initialState = {
   mediaDuration: 0,
   pendingRange: null as ClipRange | null,
   loopRange: false,
+  rangeGestureActive: false,
   seekTarget: null,
   focusedCommentId: null,
   pendingAnnotation: null,
@@ -65,13 +69,13 @@ export const useReviewStore = create<ReviewState>()((set) => ({
   ...initialState,
 
   setCurrentAsset: (asset: Asset) => {
-    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, seekTarget: null })
+    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGestureActive: false, seekTarget: null })
   },
 
   setCurrentVersion: (version: AssetVersion) => {
     set((state) =>
       state.currentVersion != null && state.currentVersion.id !== version.id
-        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, pendingRange: null, loopRange: false }
+        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGestureActive: false }
         : { currentVersion: version },
     )
   },
@@ -81,7 +85,13 @@ export const useReviewStore = create<ReviewState>()((set) => ({
   },
 
   setMediaDuration: (duration: number) => {
-    set({ mediaDuration: duration })
+    // A draft that runs past the end of the video that just loaded is no longer valid.
+    set((state) => {
+      const range = state.pendingRange
+      return range && range.end > duration
+        ? { mediaDuration: duration, pendingRange: null, loopRange: false }
+        : { mediaDuration: duration }
+    })
   },
 
   setPendingRange: (range: ClipRange | null) => {
@@ -91,6 +101,10 @@ export const useReviewStore = create<ReviewState>()((set) => ({
 
   setLoopRange: (loop: boolean) => {
     set({ loopRange: loop })
+  },
+
+  setRangeGestureActive: (active: boolean) => {
+    set({ rangeGestureActive: active })
   },
 
   seekTo: (time: number, pause?: boolean) => {
