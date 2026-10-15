@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Asset, AssetVersion } from '@/types'
+import type { ClipRange } from '@/lib/clip-range'
 
 type DrawingTool = 'pen' | 'rectangle' | 'arrow' | 'line'
 export type TimeFormat = 'standard' | 'timecode' | 'frames'
@@ -8,6 +9,17 @@ interface ReviewState {
   currentAsset: Asset | null
   currentVersion: AssetVersion | null
   playheadTime: number
+  /** Length of the loaded video in seconds; 0 until its metadata loads. */
+  mediaDuration: number
+  /** The clip range being drafted for the next comment, or null when range mode is off. */
+  pendingRange: ClipRange | null
+  /** Loop playback inside pendingRange. */
+  loopRange: boolean
+  /**
+   * Pointer id of the finger or mouse currently dragging a handle or scrubbing the zoom strip,
+   * or null. One gesture at a time across both timelines; loop playback holds off while it is set.
+   */
+  rangeGesturePointer: number | null
   seekTarget: { time: number; id: number; pause?: boolean } | null
   focusedCommentId: string | null
   pendingAnnotation: Record<string, unknown> | null
@@ -20,6 +32,13 @@ interface ReviewState {
   setCurrentAsset: (asset: Asset) => void
   setCurrentVersion: (version: AssetVersion) => void
   setPlayheadTime: (time: number) => void
+  setMediaDuration: (duration: number) => void
+  setPendingRange: (range: ClipRange | null) => void
+  setLoopRange: (loop: boolean) => void
+  /** Claim the range gesture for this pointer; false if another pointer already holds it. */
+  beginRangeGesture: (pointerId: number) => boolean
+  /** Release the gesture, only if this pointer holds it. */
+  endRangeGesture: (pointerId: number) => void
   seekTo: (time: number, pause?: boolean) => void
   setFocusedCommentId: (id: string | null) => void
   setPendingAnnotation: (data: Record<string, unknown> | null) => void
@@ -37,6 +56,10 @@ const initialState = {
   currentAsset: null,
   currentVersion: null,
   playheadTime: 0,
+  mediaDuration: 0,
+  pendingRange: null as ClipRange | null,
+  loopRange: false,
+  rangeGesturePointer: null as number | null,
   seekTarget: null,
   focusedCommentId: null,
   pendingAnnotation: null,
@@ -48,23 +71,53 @@ const initialState = {
   brushSize: 4,
 }
 
-export const useReviewStore = create<ReviewState>()((set) => ({
+export const useReviewStore = create<ReviewState>()((set, get) => ({
   ...initialState,
 
   setCurrentAsset: (asset: Asset) => {
-    set({ currentAsset: asset, playheadTime: 0, seekTarget: null })
+    set({ currentAsset: asset, playheadTime: 0, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGesturePointer: null, seekTarget: null })
   },
 
   setCurrentVersion: (version: AssetVersion) => {
     set((state) =>
       state.currentVersion != null && state.currentVersion.id !== version.id
-        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null }
+        ? { currentVersion: version, activeAnnotation: null, focusedCommentId: null, mediaDuration: 0, pendingRange: null, loopRange: false, rangeGesturePointer: null }
         : { currentVersion: version },
     )
   },
 
   setPlayheadTime: (time: number) => {
     set({ playheadTime: time })
+  },
+
+  setMediaDuration: (duration: number) => {
+    // A draft that runs past the end of the video that just loaded is no longer valid.
+    set((state) => {
+      const range = state.pendingRange
+      return range && range.end > duration
+        ? { mediaDuration: duration, pendingRange: null, loopRange: false, rangeGesturePointer: null }
+        : { mediaDuration: duration }
+    })
+  },
+
+  setPendingRange: (range: ClipRange | null) => {
+    // Leaving range mode also stops looping and abandons any drag in progress:
+    // there is nothing left to loop or drag.
+    set(range ? { pendingRange: range } : { pendingRange: null, loopRange: false, rangeGesturePointer: null })
+  },
+
+  setLoopRange: (loop: boolean) => {
+    set({ loopRange: loop })
+  },
+
+  beginRangeGesture: (pointerId: number) => {
+    if (get().rangeGesturePointer !== null) return false
+    set({ rangeGesturePointer: pointerId })
+    return true
+  },
+
+  endRangeGesture: (pointerId: number) => {
+    set((state) => (state.rangeGesturePointer === pointerId ? { rangeGesturePointer: null } : state))
   },
 
   seekTo: (time: number, pause?: boolean) => {

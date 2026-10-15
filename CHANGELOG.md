@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Select a clip range by dragging, and post it as one comment** — on a video, the new range button in the comment box drafts a start and end at the playhead. Two handles on the timeline move each edge and scrub the video to it, and a magnified strip underneath shows just the stretch around the range so the edges can be dragged to the frame on a long video (one pixel is a fraction of a second, not several). A loop button replays the range, arrow keys nudge a focused handle by a frame (Shift: a second), and posting sends the start and end together instead of two comments. Not offered on audio, replies, or compare mode; a drawing still pins the comment to one frame. (FREEFRAME-9)
+
 ### Changed
 - **Project automation can now read complete review notes headlessly** — an authorized project token can retrieve all comments, replies, timecodes, resolution state, and visibility for one asset version through the new read-only review-comments endpoint. The existing clip-marker endpoint remains unchanged for edit automation.
 - **Bucket CORS rules are tightened and the public-read bucket policy is gone** — the automatic bucket setup now pins `AllowedHeaders` to the headers browser uploads actually send (`Content-Type`, `Content-MD5`, `x-amz-content-sha256`, `x-amz-date`, `x-amz-decoded-content-length`) instead of `*`, and drops `DELETE` (no presigned-DELETE flow exists). It also no longer publishes a public-read policy on `processed/*`: HLS playback goes through the presign proxy, so the policy was dead weight that exposed any processed object to anyone who guessed a key. `docs/deployment.md` has been corrected to match. (#202)

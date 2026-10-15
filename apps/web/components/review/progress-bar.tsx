@@ -6,6 +6,9 @@ import Hls from 'hls.js'
 import { cn, formatTimecode } from '@/lib/utils'
 import { useReviewStore } from '@/stores/review-store'
 import type { Comment } from '@/types'
+import { RangeHandle } from './range-handle'
+import { RangeZoomStrip } from './range-zoom-strip'
+import { useRangeDrag } from './use-range-drag'
 
 // ─── Avatar helpers ───────────────────────────────────────────────────────────
 
@@ -285,6 +288,7 @@ export function ProgressBar({
   const [hoverX, setHoverX] = useState(0)
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null)
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId)
+  const pendingRange = useReviewStore((s) => s.pendingRange)
 
   const { previewImage, seekPreview, clearPreview } = useFramePreview(streamUrl)
 
@@ -303,6 +307,17 @@ export function ProgressBar({
       const rect = track.getBoundingClientRect()
       const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width))
       return ratio * duration
+    },
+    [duration],
+  )
+
+  // Unclamped, for handle drags (see useRangeDrag): a pointer beyond the track maps beyond the media.
+  const getRawTimeFromEvent = useCallback(
+    (clientX: number): number => {
+      const track = trackRef.current
+      if (!track || !duration) return 0
+      const rect = track.getBoundingClientRect()
+      return ((clientX - rect.left) / rect.width) * duration
     },
     [duration],
   )
@@ -356,6 +371,10 @@ export function ProgressBar({
     },
     [isDragging, getTimeFromEvent, onSeek, finishDragging],
   )
+
+  // Range handles. Dragging one moves that edge and scrubs the video to it, so
+  // the frame under the handle is the frame you are choosing.
+  const { handlersFor } = useRangeDrag({ timeAt: getRawTimeFromEvent, duration, onSeek })
 
   // Separate timecoded comments
   const pointMarkers = comments.filter(
@@ -421,11 +440,36 @@ export function ProgressBar({
             }}
           />
 
+          {/* Range being drafted for the next comment */}
+          {pendingRange && duration > 0 && (
+            <div
+              data-testid="pending-range-band"
+              className="absolute inset-y-0 rounded-full bg-amber-400/70 pointer-events-none"
+              style={{
+                left: `${timeToPercent(pendingRange.start)}%`,
+                width: `${timeToPercent(pendingRange.end) - timeToPercent(pendingRange.start)}%`,
+              }}
+            />
+          )}
+
           {/* Playhead thumb */}
           <div
             className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-accent shadow-lg opacity-0 group-hover/progress:opacity-100 transition-opacity pointer-events-none z-10"
             style={{ left: `${playPercent}%`, transform: 'translateX(-50%) translateY(-50%)' }}
           />
+
+          {/* Range handles */}
+          {pendingRange && duration > 0 &&
+            (['start', 'end'] as const).map((edge) => (
+              <RangeHandle
+                key={edge}
+                edge={edge}
+                time={pendingRange[edge]}
+                duration={duration}
+                leftPercent={timeToPercent(pendingRange[edge])}
+                handlers={handlersFor(edge)}
+              />
+            ))}
 
           {/* Frame preview + time tooltip — anchored to the visual track.
               -top-3 keeps it exactly where it sat when it was a child of the
@@ -452,6 +496,11 @@ export function ProgressBar({
           )}
         </div>
       </div>
+
+      {/* Magnified view of the drafted range, for dragging to the frame */}
+      {pendingRange && duration > 0 && (
+        <RangeZoomStrip currentTime={currentTime} duration={duration} onSeek={onSeek} />
+      )}
 
       {/* Comment markers row — below the progress bar */}
       {pointMarkers.length > 0 && (
