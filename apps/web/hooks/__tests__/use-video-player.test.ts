@@ -222,6 +222,128 @@ describe('useVideoPlayer — clip range', () => {
   })
 })
 
+describe('useVideoPlayer — playing a posted clip', () => {
+  const range = { start: 10, end: 20 }
+
+  // Set the clip up directly, as if its seek had already been carried out.
+  function playClip(loop: boolean, editing = false) {
+    useReviewStore.setState({ activeClip: { commentId: 'c1', range, editing }, loopRange: loop })
+  }
+
+  function run(video: Partial<HTMLVideoElement>, options?: { detached?: boolean }) {
+    vi.useFakeTimers()
+    try {
+      const { result } = renderHook(() => useVideoPlayer(SRC, options))
+      attach(result.current.videoRef, video)
+      act(() => {
+        if (!useReviewStore.getState().activeClip) playClip(true)
+      })
+      act(() => { vi.advanceTimersByTime(50) })
+    } finally {
+      vi.useRealTimers()
+    }
+  }
+
+  it('loops back to the clip start when playback reaches the end', () => {
+    playClip(true)
+    const video = { currentTime: 20.1, paused: false } as unknown as HTMLVideoElement
+    run(video)
+    expect(video.currentTime).toBe(10)
+  })
+
+  it('stops at the clip end when looping is off', () => {
+    playClip(false)
+    const video = { currentTime: 20.1, paused: false } as unknown as HTMLVideoElement
+    const pause = vi.fn(() => { (video as { paused: boolean }).paused = true }) // a real video flips this
+    ;(video as { pause: () => void }).pause = pause
+    run(video)
+    expect(pause).toHaveBeenCalledOnce()
+    expect(video.currentTime).toBe(20)
+    expect(useReviewStore.getState().activeClip).not.toBeNull()
+  })
+
+  it('leaves playback alone inside the clip', () => {
+    playClip(true)
+    const video = { currentTime: 15, paused: false } as unknown as HTMLVideoElement
+    run(video)
+    expect(video.currentTime).toBe(15)
+  })
+
+  it('lets go of the clip when the playhead is moved well away from it', () => {
+    playClip(true)
+    const video = { currentTime: 90, paused: false } as unknown as HTMLVideoElement
+    run(video)
+    expect(useReviewStore.getState().activeClip).toBeNull()
+    expect(video.currentTime).toBe(90)
+  })
+
+  it('keeps the clip while its handles are out, even with the playhead elsewhere', () => {
+    playClip(true, true)
+    const video = { currentTime: 5, paused: false } as unknown as HTMLVideoElement
+    run(video)
+    expect(useReviewStore.getState().activeClip).not.toBeNull()
+  })
+
+  it('waits for the player to carry out a pending seek before enforcing the clip', () => {
+    playClip(true)
+    useReviewStore.setState({ seekTarget: { time: 10, id: 7, pause: false, play: true } })
+    const video = { currentTime: 90, paused: false } as unknown as HTMLVideoElement
+    run(video)
+    expect(useReviewStore.getState().activeClip).not.toBeNull()
+    expect(video.currentTime).toBe(90)
+  })
+
+  it('does not enforce a paused video', () => {
+    playClip(true)
+    const video = { currentTime: 25, paused: true } as unknown as HTMLVideoElement
+    run(video)
+    expect(video.currentTime).toBe(25)
+  })
+
+  it('does not hold a detached compare pane to the global clip', () => {
+    playClip(true)
+    const video = { currentTime: 25, paused: false } as unknown as HTMLVideoElement
+    run(video, { detached: true })
+    expect(video.currentTime).toBe(25)
+  })
+
+  describe('play and end events', () => {
+    function PlayerHarness() {
+      const { videoRef } = useVideoPlayer('http://example.test/v.mp4')
+      return React.createElement('video', { ref: videoRef, 'data-testid': 'video' })
+    }
+
+    beforeEach(() => {
+      Object.defineProperty(HTMLMediaElement.prototype, 'play', {
+        configurable: true,
+        value: vi.fn().mockResolvedValue(undefined),
+      })
+    })
+
+    it('pressing play on a clip that stopped at its end plays it again from the start', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      playClip(false)
+      video.currentTime = 20
+
+      fireEvent(video, new Event('play'))
+
+      expect(video.currentTime).toBe(10)
+    })
+
+    it('restarts a looping clip that runs to the end of the video', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      playClip(true)
+
+      fireEvent(video, new Event('ended'))
+
+      expect(video.currentTime).toBe(10)
+      expect(HTMLMediaElement.prototype.play).toHaveBeenCalled()
+    })
+  })
+})
+
 describe('useVideoPlayer — clip range: gestures and the end of the video', () => {
   it('holds the loop off while a handle is being dragged', () => {
     vi.useFakeTimers()

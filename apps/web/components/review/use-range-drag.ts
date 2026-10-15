@@ -3,7 +3,7 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 import { FRAME_SECONDS, moveRangeEdge, type RangeEdge } from '@/lib/clip-range'
-import { useReviewStore } from '@/stores/review-store'
+import { selectEditableRange, useReviewStore } from '@/stores/review-store'
 
 interface UseRangeDragOptions {
   /**
@@ -61,9 +61,10 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
         // Keep the surrounding bar's own press-to-seek out of it.
         e.stopPropagation()
         e.preventDefault()
-        const { pendingRange, beginRangeGesture } = useReviewStore.getState()
-        if (!pendingRange) return
-        if (!beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
+        const state = useReviewStore.getState()
+        const range = selectEditableRange(state)
+        if (!range) return
+        if (!state.beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
         try {
           e.currentTarget.setPointerCapture(e.pointerId)
         } catch {
@@ -74,18 +75,19 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
         activeRef.current = {
           edge,
           pointerId: e.pointerId,
-          grabOffset: timeAt(e.clientX) - pendingRange[edge],
+          grabOffset: timeAt(e.clientX) - range[edge],
         }
       },
       onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
         const active = activeRef.current
         if (!active || active.edge !== edge || active.pointerId !== e.pointerId) return
         // Read the range at event time so a slow render never moves a stale copy.
-        const { pendingRange, setPendingRange, rangeGesturePointer } = useReviewStore.getState()
+        const state = useReviewStore.getState()
+        const range = selectEditableRange(state)
         // The store drops the gesture when the range is removed or the asset changes.
-        if (!pendingRange || rangeGesturePointer !== e.pointerId) return
-        const next = moveRangeEdge(pendingRange, edge, timeAt(e.clientX) - active.grabOffset, duration)
-        setPendingRange(next)
+        if (!range || state.rangeGesturePointer !== e.pointerId) return
+        const next = moveRangeEdge(range, edge, timeAt(e.clientX) - active.grabOffset, duration)
+        state.setEditableRange(next)
         onSeek(next[edge])
       },
       onPointerUp: finish,
@@ -98,11 +100,12 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
         // These keys also drive the player's own frame stepping; the handle owns them while focused.
         e.preventDefault()
         e.stopPropagation()
-        const { pendingRange, setPendingRange } = useReviewStore.getState()
-        if (!pendingRange) return
+        const state = useReviewStore.getState()
+        const range = selectEditableRange(state)
+        if (!range) return
         const step = e.shiftKey ? 1 : FRAME_SECONDS
-        const next = moveRangeEdge(pendingRange, edge, pendingRange[edge] + direction * step, duration)
-        setPendingRange(next)
+        const next = moveRangeEdge(range, edge, range[edge] + direction * step, duration)
+        state.setEditableRange(next)
         onSeek(next[edge])
       },
     }),

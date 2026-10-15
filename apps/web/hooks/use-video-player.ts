@@ -2,7 +2,7 @@
 
 import Hls, { type Level } from 'hls.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { loopTarget } from '@/lib/clip-range'
+import { clipEndAction, isOutsideClip, loopTarget } from '@/lib/clip-range'
 import { useReviewStore } from '@/stores/review-store'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -63,7 +63,10 @@ export function useVideoPlayer(
   const syncIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const { setPlayheadTime, setMediaDuration, seekTarget, setActiveAnnotation } = useReviewStore()
-  const loopActive = useReviewStore((state) => state.loopRange && state.pendingRange !== null)
+  // A draft range is only enforced while it loops; a playing clip is always confined to its range.
+  const loopActive = useReviewStore((state) => (state.pendingRange ? state.loopRange : state.activeClip !== null))
+  // The last store seek this player carried out, so enforcement waits for a pending one.
+  const appliedSeekIdRef = useRef<number | null>(null)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -92,19 +95,36 @@ export function useVideoPlayer(
     }
   }, [setPlayheadTime, detached])
 
-  // Loop the drafted clip range. `timeupdate` only fires ~4x a second, which would
-  // overshoot the end by up to 250ms, so check every frame while looping is on.
+  // Loop the drafted clip range, or confine playback to a posted clip. `timeupdate` only
+  // fires ~4x a second, which would overshoot the end by up to 250ms, so check every frame.
   useEffect(() => {
     if (detached || !loopActive) return
     let frame = 0
     const tick = () => {
       const video = videoRef.current
-      if (video && !video.paused) {
-        const { pendingRange, loopRange, rangeGesturePointer } = useReviewStore.getState()
-        // While a handle is dragged or the strip scrubbed the user is placing the playhead
-        // on purpose, often right at the end; looping then would snap it away.
-        const target = rangeGesturePointer !== null ? null : loopTarget(video.currentTime, pendingRange, loopRange)
-        if (target !== null) video.currentTime = target
+      const { pendingRange, activeClip, loopRange, rangeGesturePointer, seekTarget: pendingSeek, clearClip } =
+        useReviewStore.getState()
+      // While a handle is dragged or the strip scrubbed the user is placing the playhead
+      // on purpose, often right at the end; looping then would snap it away. A seek the
+      // store has asked for but this player has not carried out yet would also look like
+      // the playhead being somewhere it should not be.
+      const seekPending = pendingSeek !== null && pendingSeek.id !== appliedSeekIdRef.current
+      if (video && !video.paused && rangeGesturePointer === null && !seekPending) {
+        if (pendingRange) {
+          const target = loopTarget(video.currentTime, pendingRange, loopRange)
+          if (target !== null) video.currentTime = target
+        } else if (activeClip) {
+          if (!activeClip.editing && isOutsideClip(video.currentTime, activeClip.range)) {
+            clearClip() // the playhead was moved away: this is no longer "playing the clip"
+          } else {
+            const action = clipEndAction(video.currentTime, activeClip.range, loopRange)
+            if (action === 'restart') video.currentTime = activeClip.range.start
+            else if (action === 'stop') {
+              video.pause()
+              video.currentTime = activeClip.range.end
+            }
+          }
+        }
       }
       frame = requestAnimationFrame(tick)
     }
@@ -119,14 +139,22 @@ export function useVideoPlayer(
     const video = videoRef.current
     if (!video) return
     const dur = video.duration
+    const playAfterSeek = () => {
+      video.play().catch(() => {
+        // Autoplay may be blocked; ignore
+      })
+    }
     // Allow seek even if duration isn't fully resolved yet (NaN/0)
     if (dur && Number.isFinite(dur)) {
       const clamped = Math.max(0, Math.min(seekTarget.time, dur))
       video.currentTime = clamped
       setCurrentTime(clamped)
+      appliedSeekIdRef.current = seekTarget.id
       if (seekTarget.pause) {
         video.pause()
         setIsPlaying(false)
+      } else if (seekTarget.play) {
+        playAfterSeek()
       }
     } else {
       // Queue seek for after metadata loads
@@ -136,9 +164,12 @@ export function useVideoPlayer(
           const clamped = Math.max(0, Math.min(seekTarget.time, d))
           video.currentTime = clamped
           setCurrentTime(clamped)
+          appliedSeekIdRef.current = seekTarget.id
           if (seekTarget.pause) {
             video.pause()
             setIsPlaying(false)
+          } else if (seekTarget.play) {
+            playAfterSeek()
           }
         }
         video.removeEventListener('loadedmetadata', onLoaded)
@@ -179,7 +210,16 @@ export function useVideoPlayer(
       }
     }
 
-    const onPlay = () => { setIsPlaying(true); if (!detached) setActiveAnnotation(null) }
+    const onPlay = () => {
+      setIsPlaying(true)
+      if (detached) return
+      setActiveAnnotation(null)
+      // Pressing play on a clip that stopped at its end plays it again from the start.
+      const { activeClip, pendingRange } = useReviewStore.getState()
+      if (!pendingRange && activeClip && !activeClip.editing && video.currentTime >= activeClip.range.end) {
+        video.currentTime = activeClip.range.start
+      }
+    }
     const onPause = () => setIsPlaying(false)
     const onWaiting = () => setIsLoading(true)
     const onCanPlay = () => setIsLoading(false)
@@ -190,10 +230,11 @@ export function useVideoPlayer(
     const onEnded = () => {
       // A range that ends at the very end of the video: the browser stops (and pauses)
       // before the per-frame loop check can restart it.
-      const { loopRange, pendingRange, rangeGesturePointer } = useReviewStore.getState()
+      const { loopRange, pendingRange, activeClip, rangeGesturePointer } = useReviewStore.getState()
+      const loopingRange = pendingRange ?? activeClip?.range ?? null
       // Not while a handle is mid-drag: the user placed the playhead on the end on purpose.
-      if (!detached && loopRange && pendingRange && rangeGesturePointer === null) {
-        video.currentTime = pendingRange.start
+      if (!detached && loopRange && loopingRange && rangeGesturePointer === null) {
+        video.currentTime = loopingRange.start
         video.play().catch(() => {
           // Autoplay may be blocked; ignore
         })

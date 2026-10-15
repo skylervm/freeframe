@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import Hls from 'hls.js'
 import { cn, formatTimecode } from '@/lib/utils'
-import { useReviewStore } from '@/stores/review-store'
+import { selectEditableRange, selectLoopingRange, useReviewStore } from '@/stores/review-store'
 import type { Comment } from '@/types'
 import { RangeHandle } from './range-handle'
 import { RangeZoomStrip } from './range-zoom-strip'
@@ -288,7 +288,8 @@ export function ProgressBar({
   const [hoverX, setHoverX] = useState(0)
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null)
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId)
-  const pendingRange = useReviewStore((s) => s.pendingRange)
+  const playingRange = useReviewStore(selectLoopingRange)
+  const editableRange = useReviewStore(selectEditableRange)
 
   const { previewImage, seekPreview, clearPreview } = useFramePreview(streamUrl)
 
@@ -440,14 +441,14 @@ export function ProgressBar({
             }}
           />
 
-          {/* Range being drafted for the next comment */}
-          {pendingRange && duration > 0 && (
+          {/* Range being drafted for the next comment, or the posted clip being played */}
+          {playingRange && duration > 0 && (
             <div
               data-testid="pending-range-band"
               className="absolute inset-y-0 rounded-full bg-amber-400/70 pointer-events-none"
               style={{
-                left: `${timeToPercent(pendingRange.start)}%`,
-                width: `${timeToPercent(pendingRange.end) - timeToPercent(pendingRange.start)}%`,
+                left: `${timeToPercent(playingRange.start)}%`,
+                width: `${timeToPercent(playingRange.end) - timeToPercent(playingRange.start)}%`,
               }}
             />
           )}
@@ -459,14 +460,14 @@ export function ProgressBar({
           />
 
           {/* Range handles */}
-          {pendingRange && duration > 0 &&
+          {editableRange && duration > 0 &&
             (['start', 'end'] as const).map((edge) => (
               <RangeHandle
                 key={edge}
                 edge={edge}
-                time={pendingRange[edge]}
+                time={editableRange[edge]}
                 duration={duration}
-                leftPercent={timeToPercent(pendingRange[edge])}
+                leftPercent={timeToPercent(editableRange[edge])}
                 handlers={handlersFor(edge)}
               />
             ))}
@@ -497,8 +498,8 @@ export function ProgressBar({
         </div>
       </div>
 
-      {/* Magnified view of the drafted range, for dragging to the frame */}
-      {pendingRange && duration > 0 && (
+      {/* Magnified view of the drafted range (or the clip being edited), for dragging to the frame */}
+      {editableRange && duration > 0 && (
         <RangeZoomStrip currentTime={currentTime} duration={duration} onSeek={onSeek} />
       )}
 

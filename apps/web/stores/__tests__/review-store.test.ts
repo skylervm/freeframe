@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useReviewStore } from '../review-store'
+import { selectEditableRange, selectLoopingRange, useReviewStore } from '../review-store'
 
 describe('Review store', () => {
   beforeEach(() => {
@@ -195,6 +195,78 @@ describe('review store clip range: version and duration changes', () => {
     useReviewStore.getState().beginRangeGesture(1)
     useReviewStore.getState().setPendingRange(null)
     expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+  })
+
+  describe('playing a posted clip', () => {
+    const range = { start: 10, end: 20 }
+
+    it('activateClip loops the range, seeks to its start and asks to play', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      const state = useReviewStore.getState()
+      expect(state.activeClip).toEqual({ commentId: 'c1', range, editing: false })
+      expect(state.loopRange).toBe(true)
+      expect(state.seekTarget).toMatchObject({ time: 10, play: true, pause: false })
+      expect(selectLoopingRange(state)).toEqual(range)
+      expect(selectEditableRange(state)).toBeNull()
+    })
+
+    it('activating a clip abandons a draft range', () => {
+      useReviewStore.getState().setPendingRange({ start: 1, end: 5 })
+      useReviewStore.getState().activateClip('c1', range)
+      expect(useReviewStore.getState().pendingRange).toBeNull()
+    })
+
+    it('starting a draft drops the clip and does not inherit its looping', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().setPendingRange({ start: 1, end: 5 })
+      const state = useReviewStore.getState()
+      expect(state.activeClip).toBeNull()
+      expect(state.loopRange).toBe(false)
+      expect(selectLoopingRange(state)).toEqual({ start: 1, end: 5 })
+    })
+
+    it('an ordinary seek leaves the clip', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().seekTo(100, true)
+      expect(useReviewStore.getState().activeClip).toBeNull()
+      expect(useReviewStore.getState().loopRange).toBe(false)
+    })
+
+    it('seeks while editing the clip (handle drags, scrubs) keep it', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().setClipEditing(true)
+      useReviewStore.getState().seekTo(100, true)
+      expect(useReviewStore.getState().activeClip).not.toBeNull()
+    })
+
+    it('setEditableRange moves the clip only while its handles are out', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().setEditableRange({ start: 12, end: 18 })
+      expect(useReviewStore.getState().activeClip?.range).toEqual(range)
+      useReviewStore.getState().setClipEditing(true)
+      useReviewStore.getState().setEditableRange({ start: 12, end: 18 })
+      expect(useReviewStore.getState().activeClip?.range).toEqual({ start: 12, end: 18 })
+      expect(selectEditableRange(useReviewStore.getState())).toEqual({ start: 12, end: 18 })
+    })
+
+    it('setEditableRange moves the draft when there is one', () => {
+      useReviewStore.getState().setPendingRange({ start: 1, end: 5 })
+      useReviewStore.getState().setEditableRange({ start: 2, end: 6 })
+      expect(useReviewStore.getState().pendingRange).toEqual({ start: 2, end: 6 })
+    })
+
+    it('clearClip stops the clip and its looping', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().clearClip()
+      expect(useReviewStore.getState().activeClip).toBeNull()
+      expect(useReviewStore.getState().loopRange).toBe(false)
+    })
+
+    it('a clip that runs past a newly loaded video is dropped', () => {
+      useReviewStore.getState().activateClip('c1', range)
+      useReviewStore.getState().setMediaDuration(15)
+      expect(useReviewStore.getState().activeClip).toBeNull()
+    })
   })
 })
 

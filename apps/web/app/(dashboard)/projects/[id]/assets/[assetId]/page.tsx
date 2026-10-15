@@ -751,6 +751,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <CommentPanel
                     comments={comments as any}
                     currentUserId={user?.id}
+                    clipPlayback={{ isProjectOwner: currentRole === 'owner' }}
                     onResolve={resolveComment}
                     onDelete={deleteComment}
                     onAddReaction={addReaction}

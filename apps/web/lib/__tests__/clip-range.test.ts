@@ -4,6 +4,8 @@ import {
   MIN_RANGE_SECONDS,
   ZOOM_MIN_PAD_SECONDS,
   defaultRange,
+  clipEndAction,
+  isOutsideClip,
   loopTarget,
   moveRangeEdge,
   windowPercent,
@@ -72,6 +74,39 @@ describe('loopTarget', () => {
   it('does nothing when looping is off or there is no range', () => {
     expect(loopTarget(25, range, false)).toBeNull()
     expect(loopTarget(25, null, true)).toBeNull()
+  })
+})
+
+describe('clipEndAction', () => {
+  const range = { start: 10, end: 20 }
+
+  it('restarts a looping clip once the playhead reaches the end', () => {
+    expect(clipEndAction(20, range, true)).toBe('restart')
+    expect(clipEndAction(20.2, range, true)).toBe('restart')
+  })
+
+  it('stops a non-looping clip at the end', () => {
+    expect(clipEndAction(20, range, false)).toBe('stop')
+  })
+
+  it('leaves playback alone before the end or with no clip', () => {
+    expect(clipEndAction(19.9, range, true)).toBeNull()
+    expect(clipEndAction(25, null, true)).toBeNull()
+  })
+})
+
+describe('isOutsideClip', () => {
+  const range = { start: 10, end: 20 }
+
+  it('is false inside the range and within the slack either side', () => {
+    expect(isOutsideClip(15, range)).toBe(false)
+    expect(isOutsideClip(9.6, range)).toBe(false)
+    expect(isOutsideClip(20.4, range)).toBe(false)
+  })
+
+  it('is true once the playhead has been moved well away', () => {
+    expect(isOutsideClip(5, range)).toBe(true)
+    expect(isOutsideClip(30, range)).toBe(true)
   })
 })
 
