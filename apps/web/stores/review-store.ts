@@ -95,7 +95,7 @@ export const useReviewStore = create<ReviewState>()((set, get) => ({
     set((state) => {
       const range = state.pendingRange
       return range && range.end > duration
-        ? { mediaDuration: duration, pendingRange: null, loopRange: false }
+        ? { mediaDuration: duration, pendingRange: null, loopRange: false, rangeGesturePointer: null }
         : { mediaDuration: duration }
     })
   },

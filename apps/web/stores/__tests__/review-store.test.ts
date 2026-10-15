@@ -165,6 +165,14 @@ describe('review store clip range: version and duration changes', () => {
     expect(useReviewStore.getState().pendingRange).toEqual({ start: 10, end: 20 })
   })
 
+  it('abandons a gesture in progress when a shorter video invalidates the draft', () => {
+    useReviewStore.getState().setPendingRange({ start: 2990, end: 2995 })
+    useReviewStore.getState().beginRangeGesture(1)
+    useReviewStore.getState().setMediaDuration(100)
+    expect(useReviewStore.getState().pendingRange).toBeNull()
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+  })
+
   it('clears the gesture on an asset or version change', () => {
     useReviewStore.getState().beginRangeGesture(1)
     useReviewStore.getState().setCurrentAsset({ id: 'a2' } as any)

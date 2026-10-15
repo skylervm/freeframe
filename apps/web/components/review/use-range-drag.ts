@@ -64,7 +64,13 @@ export function useRangeDrag({ timeAt, duration, onSeek, onDragEnd }: UseRangeDr
         const { pendingRange, beginRangeGesture } = useReviewStore.getState()
         if (!pendingRange) return
         if (!beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
-        e.currentTarget.setPointerCapture(e.pointerId)
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId)
+        } catch {
+          // The pointer is already gone, so no up or cancel will ever arrive to release the claim.
+          useReviewStore.getState().endRangeGesture(e.pointerId)
+          return
+        }
         activeRef.current = {
           edge,
           pointerId: e.pointerId,

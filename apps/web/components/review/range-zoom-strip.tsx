@@ -97,7 +97,13 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   const handleScrubDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
     if (!useReviewStore.getState().beginRangeGesture(e.pointerId)) return // another pointer owns the gesture
-    e.currentTarget.setPointerCapture(e.pointerId)
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId)
+    } catch {
+      // The pointer is already gone, so no up or cancel will ever arrive to release the claim.
+      useReviewStore.getState().endRangeGesture(e.pointerId)
+      return
+    }
     scrubPointerRef.current = e.pointerId
     onSeek(timeAt(e.clientX))
   }

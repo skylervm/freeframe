@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
 import { useReviewStore } from '@/stores/review-store'
 import { ProgressBar } from '../progress-bar'
@@ -377,6 +377,29 @@ describe('ProgressBar range drag: reaching the ends, one gesture, cleanup', () =
     fireEvent.pointerDown(handle('end'), { clientX: xFor(40), pointerId: 1 })
     fireEvent.pointerMove(handle('end'), { clientX: xFor(50), pointerId: 1 })
     expect(useReviewStore.getState().pendingRange).toEqual({ start: 30, end: 50 })
+  })
+})
+
+describe('ProgressBar range drag: pointer capture failing', () => {
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', { configurable: true, value: vi.fn() })
+  })
+
+  it('does not keep the gesture claimed when capture throws on a handle or on the strip', () => {
+    useReviewStore.getState().setPendingRange({ start: 10, end: 20 })
+    const { container } = render(<ProgressBar currentTime={0} duration={100} onSeek={vi.fn()} />)
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: () => { throw new DOMException('no such pointer', 'NotFoundError') },
+    })
+
+    const handle = container.querySelector('[data-testid="range-handle-end"]') as HTMLElement
+    fireEvent.pointerDown(handle, { clientX: 40, pointerId: 1 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
+
+    const stripHit = container.querySelector('[data-testid="range-zoom-hit-area"]') as HTMLElement
+    fireEvent.pointerDown(stripHit, { clientX: 500, pointerId: 2 })
+    expect(useReviewStore.getState().rangeGesturePointer).toBeNull()
   })
 })
 
