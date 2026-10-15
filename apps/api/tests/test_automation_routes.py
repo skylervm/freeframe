@@ -563,13 +563,13 @@ def test_review_comments_include_all_notes_and_replies(monkeypatch):
 
 @pytest.mark.parametrize(
     "body",
-    ["CLIP 1: START", "clip 2: end", " Clip 3: start here ", "clip 4: END HERE"],
+    ["CLIP 1: START", "clip 2: end", " Clip 3: start here ", "clip 4: END HERE", "Clip 5", " clip 10 "],
 )
 def test_clip_instruction_parser_accepts_short_or_long_edges(body):
     assert automation_module._CLIP_INSTRUCTION.match(body)
 
 
-@pytest.mark.parametrize("body", ["clip 1: beginning", "clip 2: end now", "my clip 3: start"])
+@pytest.mark.parametrize("body", ["clip 1: beginning", "clip 2: end now", "my clip 3: start", "clip", "clip 4 great", "clip 5:"])
 def test_clip_instruction_parser_rejects_non_instruction_text(body):
     assert automation_module._CLIP_INSTRUCTION.match(body) is None
 
