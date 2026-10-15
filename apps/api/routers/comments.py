@@ -470,7 +470,15 @@ def update_comment(
         ).first()
         if not member:
             raise HTTPException(status_code=403, detail="Can only edit your own comments")
-    comment.body = body.body
+    if body.timecode_start is not None:
+        # Only a timed top-level comment has a range to move; this never turns a reply or
+        # an untimed note into one.
+        if comment.parent_id is not None or comment.timecode_start is None:
+            raise HTTPException(status_code=400, detail="Only a timed comment can change its range")
+        comment.timecode_start = body.timecode_start
+        comment.timecode_end = body.timecode_end
+    if body.body is not None:
+        comment.body = body.body
     comment.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(comment)

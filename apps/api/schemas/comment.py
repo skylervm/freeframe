@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field, field_validator
+import math
+from pydantic import BaseModel, Field, field_validator, model_validator
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -30,7 +31,22 @@ class GuestCommentCreate(BaseModel):
     guest_name: Optional[str] = None
 
 class CommentUpdate(BaseModel):
-    body: str
+    body: Optional[str] = None
+    timecode_start: Optional[float] = None
+    timecode_end: Optional[float] = None
+
+    @model_validator(mode="after")
+    def check_fields(self) -> "CommentUpdate":
+        if self.body is None and self.timecode_start is None and self.timecode_end is None:
+            raise ValueError("nothing to update")
+        if (self.timecode_start is None) != (self.timecode_end is None):
+            raise ValueError("timecode_start and timecode_end must be sent together")
+        if self.timecode_start is not None and self.timecode_end is not None:
+            if not (math.isfinite(self.timecode_start) and math.isfinite(self.timecode_end)):
+                raise ValueError("timecodes must be finite numbers")
+            if self.timecode_start < 0 or self.timecode_end <= self.timecode_start:
+                raise ValueError("timecode_end must be after timecode_start, and both at least 0")
+        return self
 
 class AnnotationResponse(BaseModel):
     id: uuid.UUID
