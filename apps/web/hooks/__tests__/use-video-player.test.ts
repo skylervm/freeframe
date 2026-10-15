@@ -331,6 +331,18 @@ describe('useVideoPlayer — playing a posted clip', () => {
       expect(video.currentTime).toBe(10)
     })
 
+    it('pressing play after scrubbing away from the clip lets go of it instead of snapping back', () => {
+      const { getByTestId } = render(React.createElement(PlayerHarness))
+      const video = getByTestId('video') as HTMLVideoElement
+      playClip(true)
+      video.currentTime = 90
+
+      fireEvent(video, new Event('play'))
+
+      expect(useReviewStore.getState().activeClip).toBeNull()
+      expect(video.currentTime).toBe(90)
+    })
+
     it('restarts a looping clip that runs to the end of the video', () => {
       const { getByTestId } = render(React.createElement(PlayerHarness))
       const video = getByTestId('video') as HTMLVideoElement

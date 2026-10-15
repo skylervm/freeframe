@@ -87,8 +87,12 @@ def test_range_only_update_leaves_the_body_alone(monkeypatch):
     assert comment.body == "keep me"
 
 
-@pytest.mark.parametrize("kwargs", [{"parent_id": uuid.uuid4()}, {"start": None, "end": None}])
-def test_untimed_notes_and_replies_cannot_gain_a_range(monkeypatch, kwargs):
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"parent_id": uuid.uuid4()}, {"start": None, "end": None}, {"end": None}],
+    ids=["reply", "untimed note", "point comment"],
+)
+def test_replies_notes_and_point_comments_cannot_gain_a_range(monkeypatch, kwargs):
     author = uuid.uuid4()
     comment = _comment(author, **kwargs)
     call, db = _patch(monkeypatch, comment, user_id=author, project_owner=False)

@@ -170,6 +170,21 @@ describe('editing a clip range', () => {
     expect((comment as unknown as { timecode_start: number }).timecode_start).toBe(758)
   })
 
+  it('Cancel after a save returns to the saved range, not the one the page first loaded', async () => {
+    panel({ clipPlayback: { isProjectOwner: true } })
+    fireEvent.click(screen.getByText('Clip 3'))
+    fireEvent.click(screen.getByRole('button', { name: /edit range/i }))
+    useReviewStore.getState().setEditableRange({ start: 758, end: 770 })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    await waitFor(() => expect(useReviewStore.getState().activeClip?.editing).toBe(false))
+
+    fireEvent.click(screen.getByRole('button', { name: /edit range/i }))
+    useReviewStore.getState().setEditableRange({ start: 700, end: 800 })
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+    expect(useReviewStore.getState().activeClip?.range).toEqual({ start: 758, end: 770 })
+  })
+
   it('a failed save stays in edit mode and says so', async () => {
     patch.mockRejectedValue(new Error('403'))
     panel({ clipPlayback: { isProjectOwner: true } })

@@ -32,19 +32,26 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipCo
   const { mutate } = useSWRConfig()
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  // The caller updates its copy of the comment in place, which does not re-render it, so
+  // keep the range as last saved here rather than trusting a possibly stale prop.
+  const [saved, setSaved] = React.useState(savedRange)
+  React.useEffect(() => setSaved(savedRange), [savedRange.start, savedRange.end]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (activeClip?.commentId !== commentId) return null
 
   const editing = activeClip.editing
 
   const save = async () => {
-    const { range } = useReviewStore.getState().activeClip ?? activeClip
+    const current = useReviewStore.getState().activeClip
+    if (current?.commentId !== commentId) return
+    const { range } = current
     setSaving(true)
     setError(null)
     try {
       await api.patch(`/comments/${commentId}`, { timecode_start: range.start, timecode_end: range.end })
       onSaved(range)
-      setClipEditing(false)
+      setSaved(range)
+      if (useReviewStore.getState().activeClip?.commentId === commentId) setClipEditing(false)
       void mutate((key) => typeof key === 'string' && key.includes('/comments?version_id='))
     } catch {
       setError("Couldn't save the new range.")
@@ -54,7 +61,7 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipCo
   }
 
   const cancel = () => {
-    setEditableRange(savedRange)
+    setEditableRange(saved)
     setClipEditing(false)
     setError(null)
   }

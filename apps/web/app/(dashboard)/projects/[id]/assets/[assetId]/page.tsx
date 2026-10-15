@@ -751,7 +751,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                   <CommentPanel
                     comments={comments as any}
                     currentUserId={user?.id}
-                    clipPlayback={{ isProjectOwner: currentRole === 'owner' }}
+                    clipPlayback={asset.asset_type === 'video' ? { isProjectOwner: currentRole === 'owner' } : undefined}
                     onResolve={resolveComment}
                     onDelete={deleteComment}
                     onAddReaction={addReaction}

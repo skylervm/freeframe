@@ -214,9 +214,13 @@ export function useVideoPlayer(
       setIsPlaying(true)
       if (detached) return
       setActiveAnnotation(null)
-      // Pressing play on a clip that stopped at its end plays it again from the start.
-      const { activeClip, pendingRange } = useReviewStore.getState()
-      if (!pendingRange && activeClip && !activeClip.editing && video.currentTime >= activeClip.range.end) {
+      const { activeClip, pendingRange, clearClip } = useReviewStore.getState()
+      if (pendingRange || !activeClip || activeClip.editing) return
+      if (isOutsideClip(video.currentTime, activeClip.range)) {
+        // Scrubbed away while paused: playing from there is no longer playing the clip.
+        clearClip()
+      } else if (video.currentTime >= activeClip.range.end) {
+        // Pressing play on a clip that stopped at its end plays it again from the start.
         video.currentTime = activeClip.range.start
       }
     }
