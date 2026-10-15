@@ -454,7 +454,8 @@ function CommentItem({
     const playing = useReviewStore.getState().activeClip;
     // Clicking inside a clip whose handles are out must not restart it mid-edit.
     if (playing?.commentId === comment.id && playing.editing) return;
-    activateClip(comment.id, clipRange);
+    // Read the times now: a save changes the comment in place without re-rendering this row.
+    activateClip(comment.id, { start: comment.timecode_start!, end: comment.timecode_end! });
   };
   const avatarColor = getAvatarColor(authorName);
   const isReplyingHere = replyingTo === comment.id && depth === 0;

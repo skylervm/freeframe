@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { useReviewStore } from '@/stores/review-store'
 import { CommentPanel } from '../comment-panel'
 
@@ -183,6 +183,35 @@ describe('editing a clip range', () => {
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
 
     expect(useReviewStore.getState().activeClip?.range).toEqual({ start: 758, end: 770 })
+  })
+
+  it('a save that finishes after another clip started does not touch that clip, but is still recorded', async () => {
+    let finishSave: (value?: unknown) => void = () => {}
+    patch.mockReturnValue(new Promise((resolve) => { finishSave = resolve }))
+    const first = rangeComment()
+    const second = rangeComment({ id: 'c2', timecode_start: 900, timecode_end: 910 })
+    render(
+      <CommentPanel
+        comments={[first, second]}
+        currentUserId="u-viewer"
+        clipPlayback={{ isProjectOwner: true }}
+        onResolve={noop} onDelete={noop} onAddReaction={noop} onRemoveReaction={noop}
+        onReply={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getAllByText('Clip 3')[0])
+    fireEvent.click(screen.getByRole('button', { name: /edit range/i }))
+    useReviewStore.getState().setEditableRange({ start: 758, end: 770 })
+    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+
+    act(() => {
+      useReviewStore.getState().activateClip('c2', { start: 900, end: 910 })
+      useReviewStore.getState().setClipEditing(true)
+    })
+    await act(async () => { finishSave({}) })
+
+    expect(useReviewStore.getState().activeClip).toMatchObject({ commentId: 'c2', editing: true })
+    expect((first as unknown as { timecode_start: number }).timecode_start).toBe(758)
   })
 
   it('a failed save stays in edit mode and says so', async () => {

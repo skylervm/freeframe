@@ -214,8 +214,10 @@ export function useVideoPlayer(
       setIsPlaying(true)
       if (detached) return
       setActiveAnnotation(null)
-      const { activeClip, pendingRange, clearClip } = useReviewStore.getState()
+      const { activeClip, pendingRange, clearClip, seekTarget: pendingSeek } = useReviewStore.getState()
       if (pendingRange || !activeClip || activeClip.editing) return
+      // A queued seek to the clip start has not run yet, so the playhead is not where it will be.
+      if (pendingSeek !== null && pendingSeek.id !== appliedSeekIdRef.current) return
       if (isOutsideClip(video.currentTime, activeClip.range)) {
         // Scrubbed away while paused: playing from there is no longer playing the clip.
         clearClip()
