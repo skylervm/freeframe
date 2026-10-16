@@ -62,6 +62,13 @@ def locked_snapshot(comments: list[Comment]) -> tuple[list[dict], str]:
                 "message": f"Clip {number} must have finite timecodes with start >= 0 and end > start",
             })
         ranges.append({"comment_id": str(comment.id), "number": number, "start": start, "end": end})
+    numbers = [item["number"] for item in ranges]
+    for number in sorted(set(numbers)):
+        if numbers.count(number) > 1:
+            raise HTTPException(status_code=409, detail={
+                "code": "duplicate_clip_number",
+                "message": f"Clip {number} is used by more than one locked range",
+            })
     ranges.sort(key=lambda item: (item["number"], item["comment_id"]))
     canonical = json.dumps(ranges, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return ranges, hashlib.sha256(canonical.encode()).hexdigest()

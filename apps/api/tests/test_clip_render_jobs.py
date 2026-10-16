@@ -228,6 +228,26 @@ def test_worker_range_schema_rejects_invalid_timecodes(start, end):
         ClipRenderRange(comment_id=uuid.uuid4(), number=1, start=start, end=end)
 
 
+def test_two_locked_ranges_with_the_same_clip_number_are_a_conflict(queue):
+    locked = [comment for comment in queue.comments if comment.locked_at is not None]
+    assert len(locked) >= 2
+    locked[1].body = locked[0].body
+    response = queue.create()
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "duplicate_clip_number"
+    assert locked[0].body in response.json()["detail"]["message"]
+    assert queue.jobs == []
+    queue.db.commit.assert_not_called()
+
+
+def test_a_duplicate_clip_number_on_an_unlocked_range_is_skipped(queue):
+    unlocked = [comment for comment in queue.comments if comment.locked_at is None]
+    locked = [comment for comment in queue.comments if comment.locked_at is not None]
+    assert unlocked and locked
+    unlocked[0].body = locked[0].body
+    assert queue.create().status_code == 201
+
+
 def test_valid_ranges_can_start_at_zero_and_invalid_unlocked_ranges_are_skipped(queue):
     queue.comments[0].timecode_start = 0
     queue.comments[1].timecode_start = float("nan")

@@ -32,7 +32,8 @@ generation stays disabled until a range is locked again.
 
 Creation conflicts return HTTP 409 with a structured `detail` containing `code`
 and `message`. Codes are `version_not_ready`, `no_locked_ranges`, `invalid_range`,
-`job_active`, and `already_rendered`.
+`duplicate_clip_number` (two locked ranges share a clip number), `job_active`, and
+`already_rendered`.
 
 The Mac last-seen time is the newest `last_used_at` of a non-revoked,
 non-deleted project automation token. It reflects automation API use, which
