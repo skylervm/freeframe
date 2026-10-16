@@ -40,7 +40,7 @@ from . import upload
 
 router = APIRouter(prefix="/automation", tags=["automation"])
 _CLIP_INSTRUCTION = re.compile(
-    r"^\s*clip\s+\d+\s*:\s*(?:start|end)(?:\s+here)?\s*$", re.IGNORECASE
+    r"^\s*clip\s+[0-9]+\s*(?::\s*(?:start|end)(?:\s+here)?)?\s*$", re.IGNORECASE
 )
 
 
