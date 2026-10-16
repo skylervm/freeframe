@@ -76,6 +76,7 @@ interface CommentPanelProps {
   view?: CommentView;
   /** Phones: hide the inline toolbar below md, because its controls live elsewhere. */
   compactToolbar?: boolean;
+  clipRenderControls?: React.ReactNode;
   className?: string;
 }
 
@@ -835,6 +836,7 @@ export function CommentPanel({
   exportVersionId,
   view: externalView,
   compactToolbar = false,
+  clipRenderControls,
   className,
 }: CommentPanelProps) {
   const focusedCommentId = useReviewStore((s) => s.focusedCommentId);
@@ -976,6 +978,11 @@ export function CommentPanel({
   return (
     <>
     <div className={cn("flex flex-col flex-1 min-h-0", className)}>
+      {clipRenderControls && (
+        <div className={cn("shrink-0", compactToolbar && "hidden md:block")}>
+          {clipRenderControls}
+        </div>
+      )}
       {/* ─── Toolbar ──────────────────────────────────────────────── */}
       <div
         className={cn(
