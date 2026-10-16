@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useSWRConfig } from 'swr'
-import { Check, Pencil, Repeat, X } from 'lucide-react'
+import { Check, Lock, LockOpen, Pencil, Repeat, X } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { ClipRange } from '@/lib/clip-range'
@@ -16,6 +16,10 @@ interface ClipControlsProps {
   canEdit: boolean
   /** Called once the new range is saved, so the caller can update its copy of the comment. */
   onSaved: (range: ClipRange) => void
+  /** When the range was locked (approved), or null. A locked range cannot be edited. */
+  lockedAt: string | null
+  /** Called once a lock or unlock is saved, so the caller can update its copy of the comment. */
+  onLockChanged: (lockedAt: string | null) => void
 }
 
 const BUTTON =
@@ -25,7 +29,7 @@ const BUTTON =
  * Controls for the posted range comment that is being played: loop on or off, edit its
  * start and end, or stop. Renders nothing unless this comment is the one playing.
  */
-export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipControlsProps) {
+export function ClipControls({ commentId, savedRange, canEdit, onSaved, lockedAt, onLockChanged }: ClipControlsProps) {
   const activeClip = useReviewStore((s) => s.activeClip)
   const loopRange = useReviewStore((s) => s.loopRange)
   const { setLoopRange, clearClip, setClipEditing, setEditableRange } = useReviewStore.getState()
@@ -36,6 +40,9 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipCo
   // keep the range as last saved here rather than trusting a possibly stale prop.
   const [saved, setSaved] = React.useState(savedRange)
   React.useEffect(() => setSaved(savedRange), [savedRange.start, savedRange.end]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Same reason as `saved`: the lock state as last saved here.
+  const [locked, setLocked] = React.useState(lockedAt)
+  React.useEffect(() => setLocked(lockedAt), [lockedAt])
 
   if (activeClip?.commentId !== commentId) return null
 
@@ -55,6 +62,23 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipCo
       void mutate((key) => typeof key === 'string' && key.includes('/comments?version_id='))
     } catch {
       setError("Couldn't save the new range.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const setLock = async (lock: boolean) => {
+    if (useReviewStore.getState().activeClip?.commentId !== commentId) return
+    setSaving(true)
+    setError(null)
+    try {
+      const updated = await api.patch<{ locked_at?: string | null }>(`/comments/${commentId}`, { locked: lock })
+      const next = lock ? (updated?.locked_at ?? new Date().toISOString()) : null
+      onLockChanged(next)
+      setLocked(next)
+      void mutate((key) => typeof key === 'string' && key.includes('/comments?version_id='))
+    } catch {
+      setError(lock ? "Couldn't lock this range." : "Couldn't unlock this range.")
     } finally {
       setSaving(false)
     }
@@ -107,7 +131,38 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved }: ClipCo
         </>
       ) : (
         <>
-          {canEdit && (
+          {locked ? (
+            <>
+              <span className="inline-flex items-center gap-1 px-1 text-[11px] font-medium text-emerald-400">
+                <Lock className="h-3 w-3" />
+                Locked
+              </span>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  title="Unlock this range so it can be edited"
+                  onClick={() => setLock(false)}
+                  className={cn(BUTTON, 'bg-white/[0.06] text-text-tertiary hover:text-text-primary')}
+                >
+                  <LockOpen className="h-3 w-3" />
+                  Unlock
+                </button>
+              )}
+            </>
+          ) : canEdit && (
+            <button
+              type="button"
+              disabled={saving}
+              title="Lock this range to approve it as a clip"
+              onClick={() => setLock(true)}
+              className={cn(BUTTON, 'bg-white/[0.06] text-text-tertiary hover:text-text-primary')}
+            >
+              <Lock className="h-3 w-3" />
+              Lock
+            </button>
+          )}
+          {canEdit && !locked && (
             <button
               type="button"
               title="Drag the start and end to adjust this clip"

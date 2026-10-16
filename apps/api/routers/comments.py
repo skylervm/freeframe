@@ -475,8 +475,18 @@ def update_comment(
         # untimed note or a point comment into one.
         if comment.parent_id is not None or comment.timecode_start is None or comment.timecode_end is None:
             raise HTTPException(status_code=400, detail="Only a range comment can change its range")
+        if comment.locked_at is not None:
+            raise HTTPException(status_code=409, detail="Range is locked")
         comment.timecode_start = body.timecode_start
         comment.timecode_end = body.timecode_end
+    if body.locked is not None:
+        if comment.parent_id is not None or comment.timecode_start is None or comment.timecode_end is None:
+            raise HTTPException(status_code=400, detail="Only a range comment can be locked")
+        # Locking twice keeps the first approval time.
+        if body.locked and comment.locked_at is None:
+            comment.locked_at = datetime.now(timezone.utc)
+        elif not body.locked:
+            comment.locked_at = None
     if body.body is not None:
         comment.body = body.body
     comment.updated_at = datetime.now(timezone.utc)

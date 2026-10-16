@@ -581,6 +581,15 @@ function CommentItem({
                     )}
                 </button>
               )}
+            {clipRange && comment.locked_at && (
+              <span
+                className="inline-flex items-center text-emerald-400"
+                title="Range locked"
+                aria-label="Range locked"
+              >
+                <Lock className="h-3 w-3" />
+              </span>
+            )}
             {comment.annotation && (
               <button
                 className="inline-flex items-center justify-center h-5 w-5 rounded text-purple-400/70 hover:text-purple-400 hover:bg-purple-500/15 transition-colors"
@@ -609,6 +618,10 @@ function CommentItem({
               onSaved={(range) => {
                 comment.timecode_start = range.start;
                 comment.timecode_end = range.end;
+              }}
+              lockedAt={comment.locked_at ?? null}
+              onLockChanged={(lockedAt) => {
+                comment.locked_at = lockedAt;
               }}
             />
           )}

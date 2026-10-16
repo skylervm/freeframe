@@ -423,7 +423,12 @@ export function ProgressBar({
             return (
               <div
                 key={c.id}
-                className="absolute inset-y-0 bg-yellow-400/40 rounded-full pointer-events-none"
+                data-testid="range-band"
+                data-locked={c.locked_at ? 'true' : undefined}
+                className={cn(
+                  'absolute inset-y-0 rounded-full pointer-events-none',
+                  c.locked_at ? 'bg-emerald-400/40' : 'bg-yellow-400/40',
+                )}
                 style={{
                   left: `${left}%`,
                   width: `${right - left}%`,

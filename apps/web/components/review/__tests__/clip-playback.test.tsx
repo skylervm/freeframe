@@ -20,7 +20,7 @@ function rangeComment(overrides: Record<string, unknown> = {}) {
   return {
     id: 'c1', asset_id: 'a1', version_id: 'v1', parent_id: null, author_id: 'u-author',
     author: { id: 'u-author', name: 'Japeth', avatar_url: null },
-    body: 'Clip 3', timecode_start: 757, timecode_end: 771.5,
+    body: 'Clip 3', timecode_start: 757, timecode_end: 771.5, locked_at: null,
     resolved: false, visibility: 'public',
     created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     replies: [], reactions: [], attachments: [],
@@ -240,5 +240,99 @@ describe('editing a clip range', () => {
       editing: false,
     })
     expect(patch).not.toHaveBeenCalled()
+  })
+})
+
+describe('locking a clip range', () => {
+  const LOCKED = '2026-10-01T00:00:00Z'
+
+  it('the author can lock an unlocked range, which hides Edit range', async () => {
+    const comment = rangeComment()
+    panel({ currentUserId: 'u-author', clipPlayback: { isProjectOwner: false } }, comment)
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    fireEvent.click(screen.getByRole('button', { name: /^lock$/i }))
+
+    await screen.findByText('Locked')
+    expect(patch).toHaveBeenCalledWith('/comments/c1', { locked: true })
+    expect((comment as unknown as { locked_at: string | null }).locked_at).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /edit range/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /unlock/i })).toBeTruthy()
+  })
+
+  it('a locked range shows Locked and no Edit range, and the owner can unlock it', async () => {
+    const comment = rangeComment({ locked_at: LOCKED })
+    panel({ clipPlayback: { isProjectOwner: true } }, comment)
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    expect(screen.getByText('Locked')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /edit range/i })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /unlock/i }))
+
+    await screen.findByRole('button', { name: /edit range/i })
+    expect(patch).toHaveBeenCalledWith('/comments/c1', { locked: false })
+    expect((comment as unknown as { locked_at: string | null }).locked_at).toBeNull()
+    expect(screen.queryByText('Locked')).toBeNull()
+  })
+
+  it('another member sees Locked but no Lock or Unlock button', () => {
+    panel({ clipPlayback: { isProjectOwner: false } }, rangeComment({ locked_at: LOCKED }))
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    expect(screen.getByText('Locked')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /unlock/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /edit range/i })).toBeNull()
+  })
+
+  it('another member cannot lock an unlocked range', () => {
+    panel({ clipPlayback: { isProjectOwner: false } })
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    expect(screen.queryByRole('button', { name: /^lock$/i })).toBeNull()
+  })
+
+  it('hides Lock while the handles are out', () => {
+    panel({ clipPlayback: { isProjectOwner: true } })
+    fireEvent.click(screen.getByText('Clip 3'))
+    fireEvent.click(screen.getByRole('button', { name: /edit range/i }))
+
+    expect(screen.queryByRole('button', { name: /^lock$/i })).toBeNull()
+  })
+
+  it('a failed lock stays unlocked and says so', async () => {
+    patch.mockRejectedValue(new Error('409'))
+    const comment = rangeComment()
+    panel({ clipPlayback: { isProjectOwner: true } }, comment)
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    fireEvent.click(screen.getByRole('button', { name: /^lock$/i }))
+
+    await screen.findByText(/couldn't lock this range/i)
+    expect((comment as unknown as { locked_at: string | null }).locked_at).toBeNull()
+    expect(screen.getByRole('button', { name: /edit range/i })).toBeTruthy()
+  })
+
+  it('a failed unlock stays locked and says so', async () => {
+    patch.mockRejectedValue(new Error('403'))
+    panel({ clipPlayback: { isProjectOwner: true } }, rangeComment({ locked_at: LOCKED }))
+    fireEvent.click(screen.getByText('Clip 3'))
+
+    fireEvent.click(screen.getByRole('button', { name: /unlock/i }))
+
+    await screen.findByText(/couldn't unlock this range/i)
+    expect(screen.getByText('Locked')).toBeTruthy()
+  })
+
+  it('the comment shows a lock icon even when its clip is not playing', () => {
+    panel({ clipPlayback: { isProjectOwner: false } }, rangeComment({ locked_at: LOCKED }))
+
+    expect(screen.getByLabelText('Range locked')).toBeTruthy()
+  })
+
+  it('an unlocked range comment shows no lock icon', () => {
+    panel({ clipPlayback: { isProjectOwner: false } })
+
+    expect(screen.queryByLabelText('Range locked')).toBeNull()
   })
 })

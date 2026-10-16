@@ -522,6 +522,7 @@ def list_comments(
             "resolved": comment.resolved,
             "visibility": comment.visibility,
             "created_at": comment.created_at,
+            "locked": comment.locked_at is not None,
         }
         for comment in comments if _CLIP_INSTRUCTION.match(comment.body or "")
     ]
