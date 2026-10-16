@@ -12,7 +12,7 @@ from apps.api.schemas.comment import CommentUpdate
 def _comment(author_id, *, start=10.0, end=20.0, parent_id=None, body="Clip 1"):
     return MagicMock(
         id=uuid.uuid4(), author_id=author_id, asset_id=uuid.uuid4(), parent_id=parent_id,
-        timecode_start=start, timecode_end=end, body=body, deleted_at=None,
+        timecode_start=start, timecode_end=end, body=body, deleted_at=None, locked_at=None,
     )
 
 

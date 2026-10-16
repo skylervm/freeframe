@@ -1,6 +1,7 @@
 """Route-level boundaries for the project-scoped automation API."""
 import inspect
 import uuid
+from datetime import datetime, timezone
 
 from apps.api.models.trash import TrashEntityType
 import hashlib
@@ -528,6 +529,33 @@ def test_comment_export_excludes_resolved_instructions():
     result = automation_module.list_comments(asset_id, version_id, db, actor)
 
     assert [item["id"] for item in result] == [open_comment.id]
+
+
+def test_comment_export_reports_whether_each_clip_range_is_locked():
+    actor = _actor()
+    asset_id = uuid.uuid4()
+    version_id = uuid.uuid4()
+    asset = MagicMock(project_id=actor.project_id)
+    locked = MagicMock(
+        id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="Clip 1",
+        timecode_start=10, timecode_end=20, resolved=False, visibility="public", created_at=None,
+        locked_at=datetime.now(timezone.utc),
+    )
+    unlocked = MagicMock(
+        id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="Clip 2",
+        timecode_start=30, timecode_end=40, resolved=False, visibility="public", created_at=None,
+        locked_at=None,
+    )
+    db = MagicMock()
+    db.query.return_value = db
+    db.filter.return_value = db
+    db.order_by.return_value = db
+    db.first.side_effect = [asset, MagicMock()]
+    db.all.return_value = [locked, unlocked]
+
+    result = automation_module.list_comments(asset_id, version_id, db, actor)
+
+    assert [(item["id"], item["locked"]) for item in result] == [(locked.id, True), (unlocked.id, False)]
 
 
 def test_review_comments_include_all_notes_and_replies(monkeypatch):

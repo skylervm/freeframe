@@ -242,6 +242,7 @@ export interface Comment {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  locked_at?: string | null;
   author?: CommentAuthor | null;
   guest_author?: GuestAuthor | null;
 }

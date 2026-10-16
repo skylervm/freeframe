@@ -34,11 +34,16 @@ class CommentUpdate(BaseModel):
     body: Optional[str] = None
     timecode_start: Optional[float] = None
     timecode_end: Optional[float] = None
+    locked: Optional[bool] = None
 
     @model_validator(mode="after")
     def check_fields(self) -> "CommentUpdate":
-        if self.body is None and self.timecode_start is None and self.timecode_end is None:
+        if self.body is None and self.timecode_start is None and self.timecode_end is None and self.locked is None:
             raise ValueError("nothing to update")
+        if self.locked is not None and (
+            self.body is not None or self.timecode_start is not None or self.timecode_end is not None
+        ):
+            raise ValueError("locked must be sent on its own")
         if (self.timecode_start is None) != (self.timecode_end is None):
             raise ValueError("timecode_start and timecode_end must be sent together")
         if self.timecode_start is not None and self.timecode_end is not None:
@@ -130,6 +135,7 @@ class CommentResponse(BaseModel):
     visibility: str = "public"
     created_at: datetime
     updated_at: datetime
+    locked_at: Optional[datetime] = None
     author: Optional[AuthorInfo] = None
     guest_author: Optional[GuestAuthorInfo] = None
     annotation: Optional[AnnotationResponse] = None

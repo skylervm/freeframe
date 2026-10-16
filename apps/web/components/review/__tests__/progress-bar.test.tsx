@@ -121,6 +121,29 @@ describe('ProgressBar inset touch target', () => {
   })
 })
 
+describe('ProgressBar range comment bands', () => {
+  it('colours a locked range differently from an unlocked one', () => {
+    const range = (id: string, locked_at: string | null) => ({
+      id, body: id, timecode_start: 10, timecode_end: 20, resolved: false, locked_at,
+      author: { id: 'user-1', name: 'Skyler VM' },
+    }) as never
+    const { container } = render(
+      <ProgressBar
+        currentTime={0}
+        duration={100}
+        onSeek={vi.fn()}
+        comments={[range('open', null), range('approved', '2026-10-01T00:00:00Z')]}
+      />,
+    )
+
+    const [open, approved] = Array.from(container.querySelectorAll('[data-testid="range-band"]'))
+    expect(open).toHaveClass('bg-yellow-400/40')
+    expect(open).not.toHaveAttribute('data-locked')
+    expect(approved).toHaveClass('bg-emerald-400/40')
+    expect(approved).toHaveAttribute('data-locked', 'true')
+  })
+})
+
 describe('ProgressBar range handles', () => {
   // Same geometry as renderProgressBar: track left=20, width=200, duration=100,
   // so clientX = 20 + 2 * seconds.
