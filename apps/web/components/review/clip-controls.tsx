@@ -62,6 +62,8 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved, lockedAt
       void mutate((key) => typeof key === 'string' && key.includes('/comments?version_id='))
     } catch {
       setError("Couldn't save the new range.")
+      // The range may have been locked meanwhile; refetch so the row shows its real state.
+      void mutate((key) => typeof key === 'string' && key.includes('/comments?version_id='))
     } finally {
       setSaving(false)
     }
@@ -166,6 +168,7 @@ export function ClipControls({ commentId, savedRange, canEdit, onSaved, lockedAt
             <button
               type="button"
               title="Drag the start and end to adjust this clip"
+              disabled={saving}
               onClick={() => setClipEditing(true)}
               className={cn(BUTTON, 'bg-white/[0.06] text-text-tertiary hover:text-text-primary')}
             >

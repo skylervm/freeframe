@@ -584,6 +584,7 @@ function CommentItem({
             {clipRange && comment.locked_at && (
               <span
                 className="inline-flex items-center text-emerald-400"
+                role="img"
                 title="Range locked"
                 aria-label="Range locked"
               >

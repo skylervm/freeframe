@@ -72,6 +72,17 @@ def test_other_member_cannot_lock_or_unlock(monkeypatch, locked):
     db.commit.assert_not_called()
 
 
+def test_other_member_moving_a_locked_range_gets_403_not_409(monkeypatch):
+    comment = _comment(uuid.uuid4(), locked_at=APPROVED)
+    call, db = _patch(monkeypatch, comment, user_id=uuid.uuid4(), project_owner=False)
+
+    with pytest.raises(HTTPException) as error:
+        call(CommentUpdate(timecode_start=11.0, timecode_end=21.0))
+
+    assert error.value.status_code == 403
+    db.commit.assert_not_called()
+
+
 def test_locking_again_keeps_the_first_approval_time(monkeypatch):
     author = uuid.uuid4()
     comment = _comment(author, locked_at=APPROVED)
