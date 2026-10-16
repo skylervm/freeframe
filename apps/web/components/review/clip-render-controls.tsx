@@ -19,7 +19,7 @@ export function AssetClipRenderControls({ assetId, versionId, role, comments, me
 
 export function ClipRenderControls({ state, menu = false }: { state: ClipRenderState; menu?: boolean }) {
   const { data, eligible, busy, error, generate, cancel } = state
-  if (!eligible || !data || data.range_count === 0) return null
+  if (!eligible || !data || (!data.job && data.range_count === 0)) return null
 
   const { job, locked_count: locked, range_count: count, worker_last_seen_at: lastSeen } = data
   const queued = job?.status === 'queued'

@@ -66,6 +66,10 @@ def create_clip_render_job(
         ClipRenderJob.deleted_at.is_(None),
     )
     now = datetime.now(timezone.utc)
+    jobs.filter(
+        ClipRenderJob.status == "claimed",
+        ClipRenderJob.claimed_at <= now - CLIP_RENDER_LEASE,
+    ).update({"status": "failed", "message": "Render lease expired", "finished_at": now}, synchronize_session=False)
     active = jobs.filter(or_(
         ClipRenderJob.status == "queued",
         and_(ClipRenderJob.status == "claimed", ClipRenderJob.claimed_at > now - CLIP_RENDER_LEASE),
@@ -92,7 +96,7 @@ def latest_clip_render_job(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    asset = _asset_access(db, asset_id, current_user)
+    asset = _asset_access(db, asset_id, current_user, write=True)
     _version(db, asset, version_id)
     comments = range_comments(db, asset.id, version_id)
     job = db.query(ClipRenderJob).filter(

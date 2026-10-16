@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ClipRenderJobCreate(BaseModel):
@@ -10,10 +10,18 @@ class ClipRenderJobCreate(BaseModel):
 
 
 class ClipRenderRange(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+
     comment_id: uuid.UUID
     number: int = Field(ge=1, le=999)
-    start: float
+    start: float = Field(ge=0)
     end: float
+
+    @model_validator(mode="after")
+    def validate_end(self):
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        return self
 
 
 class WorkerClipRenderJob(BaseModel):
@@ -24,6 +32,10 @@ class WorkerClipRenderJob(BaseModel):
     version_id: uuid.UUID
     ranges: list[ClipRenderRange]
     created_at: datetime
+
+
+class WorkerClipRenderClaim(WorkerClipRenderJob):
+    claim_id: uuid.UUID
 
 
 class ClipRenderJobResponse(WorkerClipRenderJob):
@@ -45,8 +57,9 @@ class LatestClipRenderJob(BaseModel):
 
 
 class ClipRenderJobFinish(BaseModel):
+    claim_id: uuid.UUID
     status: Literal["done", "failed"]
-    clips_rendered: int = Field(ge=0, strict=True)
+    clips_rendered: int = Field(ge=0, le=999, strict=True)
     message: str
 
     @field_validator("message")
@@ -59,5 +72,4 @@ class WorkerClipRenderResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    status: Literal["done", "failed"]
     clips_rendered: int

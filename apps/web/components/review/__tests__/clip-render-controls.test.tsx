@@ -54,6 +54,36 @@ describe('clip render controls', () => {
     expect(value.cancel).toHaveBeenCalledOnce()
   })
 
+  it('keeps an existing queue and cancel action after all range comments are deleted', () => {
+    const value = state('queued')
+    const { rerender } = render(<ClipRenderControls state={value} />)
+    value.data = { ...value.data!, range_count: 0, locked_count: 0 }
+    rerender(<ClipRenderControls state={value} />)
+    expect(screen.getByText('Queued. Waiting for your Mac.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(value.cancel).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the rendering status with no remaining ranges', () => {
+    const value = state('claimed')
+    value.data = { ...value.data!, range_count: 0, locked_count: 0 }
+    render(<ClipRenderControls state={value} />)
+    expect(screen.getByText('Rendering on your Mac')).toBeTruthy()
+  })
+
+  it.each(['done', 'failed', 'cancelled'] as const)('keeps a %s job with no ranges and disables generation', (status) => {
+    const value = state(status)
+    value.data = { ...value.data!, range_count: 0, locked_count: 0 }
+    render(<ClipRenderControls state={value} />)
+    if (status === 'done') expect(screen.getByText('Done: 2 clips')).toBeTruthy()
+    if (status === 'failed') expect(screen.getByText('Render stopped.')).toBeTruthy()
+    const button = screen.getByRole('button', { name: 'Generate clips' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(screen.getByText('Lock a range to generate clips')).toBeTruthy()
+    fireEvent.click(button)
+    expect(value.generate).not.toHaveBeenCalled()
+  })
+
   it('honestly says when the Mac has never been seen', () => {
     const value = state('queued')
     value.data!.worker_last_seen_at = null

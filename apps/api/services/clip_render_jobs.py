@@ -1,8 +1,10 @@
 import hashlib
 import json
+import math
 import re
 from datetime import datetime, timedelta
 
+from fastapi import HTTPException
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
@@ -48,10 +50,18 @@ def clip_number(body: str) -> int | None:
 
 
 def locked_snapshot(comments: list[Comment]) -> tuple[list[dict], str]:
-    ranges = sorted([
-        {"comment_id": str(comment.id), "number": clip_number(comment.body),
-         "start": float(comment.timecode_start), "end": float(comment.timecode_end)}
-        for comment in comments if comment.locked_at is not None
-    ], key=lambda item: (item["number"], item["comment_id"]))
+    ranges = []
+    for comment in comments:
+        if comment.locked_at is None:
+            continue
+        number = clip_number(comment.body)
+        start, end = float(comment.timecode_start), float(comment.timecode_end)
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+            raise HTTPException(status_code=409, detail={
+                "code": "invalid_range",
+                "message": f"Clip {number} must have finite timecodes with start >= 0 and end > start",
+            })
+        ranges.append({"comment_id": str(comment.id), "number": number, "start": start, "end": end})
+    ranges.sort(key=lambda item: (item["number"], item["comment_id"]))
     canonical = json.dumps(ranges, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return ranges, hashlib.sha256(canonical.encode()).hexdigest()

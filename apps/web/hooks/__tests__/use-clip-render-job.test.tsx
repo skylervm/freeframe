@@ -99,6 +99,9 @@ describe('clip render job requests', () => {
     rerender({ version: 'second' })
     await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('/assets/asset/clip-render-jobs/latest?version_id=second'))
     expect(result.current.error).toBeNull()
+    rerender({ version: 'first' })
+    await waitFor(() => expect(result.current.data).toBeTruthy())
+    expect(result.current.error).toBeNull()
   })
 
   it.each(['queued', 'claimed'] as const)('polls a %s job every ten seconds and stops after completion and unmount', async (status) => {

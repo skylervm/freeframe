@@ -33,6 +33,10 @@ export function useClipRenderJob(
     comment.id, comment.parent_id, comment.body, comment.timecode_start, comment.timecode_end, comment.locked_at, comment.resolved,
   ]))
 
+  useEffect(() => {
+    setFailure(null)
+  }, [key])
+
   // Locking, unlocking, resolving or editing a comment revalidates the same comment list.
   useEffect(() => {
     if (key) void mutate().catch(() => {})

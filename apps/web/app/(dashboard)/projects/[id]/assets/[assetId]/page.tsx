@@ -155,8 +155,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     removeReaction,
   } = useComments(asset?.id || '', currentVersion?.id || '')
   const clipRenderProps = asset?.asset_type === 'video' && currentVersion &&
-    (currentRole === 'owner' || currentRole === 'editor') &&
-    comments.some((comment) => comment.parent_id === null && comment.timecode_start != null && comment.timecode_end != null)
+    (currentRole === 'owner' || currentRole === 'editor')
     ? { assetId: asset.id, versionId: currentVersion.id, role: currentRole, comments }
     : null
 
