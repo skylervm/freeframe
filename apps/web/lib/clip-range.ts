@@ -59,6 +59,29 @@ export function loopTarget(
   return currentTime >= range.end ? range.start : null
 }
 
+/**
+ * Playing a posted clip: what to do once the playhead has reached the end of its range.
+ * With loop on it goes back to the start; with loop off it stops at the end.
+ */
+export function clipEndAction(
+  currentTime: number,
+  range: ClipRange | null,
+  loopEnabled: boolean,
+): 'restart' | 'stop' | null {
+  if (!range || currentTime < range.end) return null
+  return loopEnabled ? 'restart' : 'stop'
+}
+
+/** Slack either side of a clip before the playhead counts as having left it (scrubbed away). */
+export const CLIP_EXIT_TOLERANCE_SECONDS = 0.5
+
+export function isOutsideClip(currentTime: number, range: ClipRange): boolean {
+  return (
+    currentTime < range.start - CLIP_EXIT_TOLERANCE_SECONDS ||
+    currentTime > range.end + CLIP_EXIT_TOLERANCE_SECONDS
+  )
+}
+
 /** Context shown either side of the range in the zoom strip: at least this many seconds. */
 export const ZOOM_MIN_PAD_SECONDS = 15
 

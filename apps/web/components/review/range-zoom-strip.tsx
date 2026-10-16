@@ -9,7 +9,7 @@ import {
   type ZoomWindow,
 } from '@/lib/clip-range'
 import { cn, formatTimecode } from '@/lib/utils'
-import { useReviewStore } from '@/stores/review-store'
+import { selectEditableRange, useReviewStore } from '@/stores/review-store'
 import { RangeHandle } from './range-handle'
 import { useRangeDrag } from './use-range-drag'
 
@@ -30,7 +30,7 @@ interface RangeZoomStripProps {
  * release, or whenever the range changes from somewhere else.
  */
 export function RangeZoomStrip({ currentTime, duration, onSeek, className }: RangeZoomStripProps) {
-  const pendingRange = useReviewStore((s) => s.pendingRange)
+  const pendingRange = useReviewStore(selectEditableRange)
   const trackRef = useRef<HTMLDivElement>(null)
   const [view, setView] = useState<ZoomWindow | null>(() =>
     pendingRange ? zoomWindow(pendingRange, duration) : null,
@@ -77,7 +77,7 @@ export function RangeZoomStrip({ currentTime, duration, onSeek, className }: Ran
   )
 
   const reframe = useCallback(() => {
-    const range = useReviewStore.getState().pendingRange
+    const range = selectEditableRange(useReviewStore.getState())
     if (range) setView(zoomWindow(range, duration))
   }, [duration])
 

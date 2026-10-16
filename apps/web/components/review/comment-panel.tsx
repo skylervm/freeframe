@@ -34,6 +34,7 @@ import type { CommentWithReplies } from "@/hooks/use-comments";
 import type { ExportFormat } from "@/lib/export-comments";
 import { useCommentView, type CommentView } from "./comment-view";
 import { FpsPromptDialog } from "@/components/review/fps-prompt-dialog";
+import { ClipControls } from "@/components/review/clip-controls";
 
 export { useCommentView } from "./comment-view";
 export type {
@@ -49,6 +50,12 @@ interface CommentPanelProps {
   comments: CommentWithReplies[];
   isLoading?: boolean;
   currentUserId?: string;
+  /**
+   * Turns range comments into clips that play (looping) and can be edited. Pass it only where a
+   * player is attached to the review store. `isProjectOwner` lets the user move any clip's range,
+   * as they may edit any comment's text.
+   */
+  clipPlayback?: { isProjectOwner: boolean };
   onResolve: (commentId: string) => Promise<void>;
   onDelete: (commentId: string) => Promise<void>;
   onAddReaction: (commentId: string, emoji: string) => Promise<void>;
@@ -372,6 +379,7 @@ interface CommentItemProps {
   commentNumber?: number;
   depth?: number;
   currentUserId?: string;
+  clipPlayback?: { isProjectOwner: boolean };
   replyingTo?: string | null;
   isFocused?: boolean;
   onResolve: (commentId: string) => Promise<void>;
@@ -391,6 +399,7 @@ function CommentItem({
   commentNumber,
   depth = 0,
   currentUserId,
+  clipPlayback,
   replyingTo,
   isFocused,
   onResolve,
@@ -409,6 +418,7 @@ function CommentItem({
   const setActiveAnnotation = useReviewStore((s) => s.setActiveAnnotation);
   const showAnnotation = onShowAnnotation ?? setActiveAnnotation;
   const setFocusedCommentId = useReviewStore((s) => s.setFocusedCommentId);
+  const activateClip = useReviewStore((s) => s.activateClip);
   const itemRef = React.useRef<HTMLDivElement>(null);
   const [showReplies, setShowReplies] = React.useState(true);
   const [showEmojiPicker, setShowEmojiPicker] = React.useState(false);
@@ -427,6 +437,26 @@ function CommentItem({
   const authorName =
     comment.author?.name ?? comment.guest_author?.name ?? "Unknown";
   const isOwn = !!(currentUserId && comment.author_id === currentUserId);
+  // A range comment plays as a looping clip. Compare mode routes seeks to its own panes, so it keeps plain seeks.
+  const clipRange =
+    !!clipPlayback &&
+    !onSeekToTimecode &&
+    depth === 0 &&
+    comment.timecode_start != null &&
+    comment.timecode_end != null
+      ? { start: comment.timecode_start, end: comment.timecode_end }
+      : null;
+  const seekOrPlayClip = (start: number) => {
+    if (!clipRange) {
+      seekTo(start, true);
+      return;
+    }
+    const playing = useReviewStore.getState().activeClip;
+    // Clicking inside a clip whose handles are out must not restart it mid-edit.
+    if (playing?.commentId === comment.id && playing.editing) return;
+    // Read the times now: a save changes the comment in place without re-rendering this row.
+    activateClip(comment.id, { start: comment.timecode_start!, end: comment.timecode_end! });
+  };
   const avatarColor = getAvatarColor(authorName);
   const isReplyingHere = replyingTo === comment.id && depth === 0;
 
@@ -487,7 +517,7 @@ function CommentItem({
           comment.timecode_start !== null &&
           comment.timecode_start !== undefined
         ) {
-          seekTo(comment.timecode_start, true);
+          seekOrPlayClip(comment.timecode_start);
         }
         showAnnotation(
           comment.annotation ? comment.annotation.drawing_data : null,
@@ -535,7 +565,7 @@ function CommentItem({
                 <button
                   className="inline-flex items-center gap-1 rounded-md bg-accent/15 px-1.5 py-0.5 text-[11px] font-mono text-accent hover:bg-accent/25 transition-colors"
                   onClick={() => {
-                    seekTo(comment.timecode_start!, true);
+                    seekOrPlayClip(comment.timecode_start!);
                     setFocusedCommentId(comment.id);
                     if (comment.annotation) {
                       showAnnotation(comment.annotation.drawing_data);
@@ -570,6 +600,18 @@ function CommentItem({
               </button>
             )}
           </div>
+
+          {clipRange && (
+            <ClipControls
+              commentId={comment.id}
+              savedRange={clipRange}
+              canEdit={isOwn || !!clipPlayback?.isProjectOwner}
+              onSaved={(range) => {
+                comment.timecode_start = range.start;
+                comment.timecode_end = range.end;
+              }}
+            />
+          )}
 
           {/* Body */}
           {editing ? (
@@ -738,6 +780,7 @@ function CommentItem({
                   comment={reply}
                   depth={depth + 1}
                   currentUserId={currentUserId}
+                  clipPlayback={clipPlayback}
                   replyingTo={replyingTo}
                   onResolve={onResolve}
                   onDelete={onDelete}
@@ -765,6 +808,7 @@ export function CommentPanel({
   comments,
   isLoading,
   currentUserId,
+  clipPlayback,
   onResolve,
   onDelete,
   onAddReaction,
@@ -1315,6 +1359,7 @@ export function CommentPanel({
                 comment={comment}
                 commentNumber={index + 1}
                 currentUserId={currentUserId}
+                clipPlayback={clipPlayback}
                 replyingTo={replyingTo}
                 isFocused={focusedCommentId === comment.id}
                 onResolve={onResolve}
