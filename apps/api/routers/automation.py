@@ -1,15 +1,15 @@
 """Narrow, project-scoped endpoints for unattended media pipeline uploads."""
 import uuid
-import re
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from ..config import settings
 from ..database import get_db
@@ -26,6 +26,9 @@ from ..services.s3_service import generate_presigned_get_url
 from ..schemas.bootstrap import BootstrapProjectAdopt, BootstrapProjectCreate, BootstrapProjectResponse, BootstrapTokenRenewal
 from ..middleware.rate_limit import rate_limit
 from ..models.comment import Comment
+from ..models.clip_render_job import ClipRenderJob
+from ..schemas.clip_render_job import ClipRenderJobFinish, WorkerClipRenderClaim, WorkerClipRenderJob, WorkerClipRenderResult
+from ..services.clip_render_jobs import _CLIP_INSTRUCTION, claimable_jobs
 from ..schemas.upload import (
     AbortUploadRequest,
     CompleteUploadRequest,
@@ -39,9 +42,6 @@ from . import upload
 
 
 router = APIRouter(prefix="/automation", tags=["automation"])
-_CLIP_INSTRUCTION = re.compile(
-    r"^\s*clip\s+[0-9]+\s*(?::\s*(?:start|end)(?:\s+here)?)?\s*$", re.IGNORECASE
-)
 
 
 class AutomationDropboxLinkRequest(BaseModel):
@@ -487,6 +487,90 @@ def abort_upload(
         raise HTTPException(status_code=403, detail="Upload does not match this version")
     _validate_upload_key(db, version, body.s3_key)
     return upload.abort_upload(body, background_tasks, db, actor.user)
+
+
+def _clip_render_jobs_in_scope(db: Session, actor: AutomationActor):
+    return db.query(ClipRenderJob).filter(
+        ClipRenderJob.project_id == actor.project_id,
+        ClipRenderJob.deleted_at.is_(None),
+        select(Asset.id).where(
+            Asset.id == ClipRenderJob.asset_id,
+            Asset.project_id == actor.project_id,
+            Asset.deleted_at.is_(None),
+        ).exists(),
+        select(AssetVersion.id).where(
+            AssetVersion.id == ClipRenderJob.version_id,
+            AssetVersion.asset_id == ClipRenderJob.asset_id,
+            AssetVersion.deleted_at.is_(None),
+        ).exists(),
+    )
+
+
+def _clip_render_job_in_scope(db: Session, job_id: uuid.UUID, actor: AutomationActor) -> ClipRenderJob:
+    job = _clip_render_jobs_in_scope(db, actor).filter(
+        ClipRenderJob.id == job_id,
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@router.get("/clip-render-jobs", response_model=list[WorkerClipRenderJob])
+def list_clip_render_jobs(
+    status: Literal["queued"] = Query("queued"),
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    return _clip_render_jobs_in_scope(db, actor).filter(
+        claimable_jobs(datetime.now(timezone.utc)),
+    ).order_by(ClipRenderJob.created_at, ClipRenderJob.id).all()
+
+
+@router.post("/clip-render-jobs/{job_id}/claim", response_model=WorkerClipRenderClaim)
+def claim_clip_render_job(
+    job_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    job = _clip_render_job_in_scope(db, job_id, actor)
+    now = datetime.now(timezone.utc)
+    changed = _clip_render_jobs_in_scope(db, actor).filter(
+        ClipRenderJob.id == job_id,
+        claimable_jobs(now),
+    ).update({"status": "claimed", "claimed_at": now, "claim_id": uuid.uuid4()}, synchronize_session=False)
+    if changed != 1:
+        raise HTTPException(status_code=409, detail="Job is already claimed or finished")
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@router.post("/clip-render-jobs/{job_id}/finish", response_model=WorkerClipRenderResult)
+def finish_clip_render_job(
+    job_id: uuid.UUID,
+    body: ClipRenderJobFinish,
+    db: Session = Depends(get_db),
+    actor: AutomationActor = Depends(get_automation_actor),
+):
+    job = _clip_render_job_in_scope(db, job_id, actor)
+    if job.status != "claimed" or job.claim_id != body.claim_id:
+        raise HTTPException(status_code=409, detail="Only a claimed job can finish")
+    count = len(job.ranges)
+    if body.status == "done" and body.clips_rendered != count:
+        raise HTTPException(status_code=422, detail={"code": "incomplete_render", "message": f"A done job must render all {count} clips"})
+    if body.clips_rendered > count:
+        raise HTTPException(status_code=422, detail={"code": "invalid_clip_count", "message": f"Clip count cannot exceed {count}"})
+    changed = _clip_render_jobs_in_scope(db, actor).filter(
+        ClipRenderJob.id == job_id,
+        ClipRenderJob.status == "claimed",
+        ClipRenderJob.claim_id == body.claim_id,
+    ).update({"status": body.status, "clips_rendered": body.clips_rendered,
+              "message": body.message, "finished_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    if changed != 1:
+        raise HTTPException(status_code=409, detail="Only a claimed job can finish")
+    db.commit()
+    db.refresh(job)
+    return job
 
 
 @router.get("/assets/{asset_id}/comments")

@@ -12,6 +12,7 @@ from ..models.asset import (
 )
 from ..models.comment import Comment, Annotation, CommentAttachment, CommentReaction
 from ..models.approval import Approval
+from ..models.clip_render_job import ClipRenderJob
 from ..models.share import ShareLink, ShareLinkItem, ShareLinkActivity, AssetShare
 from ..models.project import Project, ProjectMember
 from ..models.folder import Folder
@@ -118,6 +119,7 @@ def _purge_version(db, version_id, counts: PurgeCounts) -> None:
     # comments on this version (recurse each; every comment has a version_id, NOT NULL)
     for c in db.query(Comment).filter(Comment.version_id == version_id).all():
         _purge_comment(db, c.id, counts)
+    db.query(ClipRenderJob).filter(ClipRenderJob.version_id == version_id).delete(synchronize_session=False)
     db.query(Approval).filter(Approval.version_id == version_id).delete(synchronize_session=False)
     db.query(ProcessingOutbox).filter(ProcessingOutbox.version_id == version_id).delete(synchronize_session=False)
     db.query(AssetVersion).filter(AssetVersion.id == version_id).delete(synchronize_session=False)
@@ -148,6 +150,8 @@ def _purge_asset(db, asset_id, counts: PurgeCounts) -> None:
     # defensive: comments not removed via a version (all comments have a version_id, so usually none)
     for c in db.query(Comment).filter(Comment.asset_id == asset_id).all():
         _purge_comment(db, c.id, counts)
+    # defensive: render jobs carry a version_id, so _purge_version already removed these
+    db.query(ClipRenderJob).filter(ClipRenderJob.asset_id == asset_id).delete(synchronize_session=False)
     # defensive: Approval.version_id is NOT NULL, so _purge_version already removed these
     db.query(Approval).filter(Approval.asset_id == asset_id).delete(synchronize_session=False)
     db.query(AssetMetadata).filter(AssetMetadata.asset_id == asset_id).delete(synchronize_session=False)
@@ -216,6 +220,8 @@ def _purge_project(db, project_id, counts: PurgeCounts) -> None:
         _purge_folder(db, f.id, counts)
     for link in db.query(ShareLink).filter(ShareLink.project_id == project_id).all():
         _purge_share_link(db, link.id, counts)
+    # defensive: render jobs belong to assets, so _purge_asset already removed these
+    db.query(ClipRenderJob).filter(ClipRenderJob.project_id == project_id).delete(synchronize_session=False)
     field_ids = [mf.id for mf in db.query(MetadataField).filter(MetadataField.project_id == project_id).all()]
     if field_ids:
         db.query(AssetMetadata).filter(AssetMetadata.field_id.in_(field_ids)).delete(synchronize_session=False)

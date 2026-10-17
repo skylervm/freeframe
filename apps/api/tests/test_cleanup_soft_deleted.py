@@ -10,6 +10,7 @@ from apps.api.models.asset import (
     Asset, AssetType, AssetVersion, MediaFile, CarouselItem, FileType, ProcessingStatus,
 )
 from apps.api.models.comment import Comment, Annotation, CommentAttachment, CommentReaction
+from apps.api.models.clip_render_job import ClipRenderJob
 from apps.api.models.approval import Approval, ApprovalStatus
 from apps.api.models.share import ShareLink, ShareLinkItem, ShareLinkActivity, AssetShare, ShareActivityAction
 from apps.api.models.metadata import MetadataField, AssetMetadata, Collection, CollectionShare, FieldType
@@ -112,6 +113,8 @@ def test_purge_version_removes_media_carousel_and_queues_s3(real_db):
     comment = _comment(real_db, asset, version, owner)
     real_db.add(Approval(asset_id=asset.id, version_id=version.id, user_id=owner.id,
                          status=ApprovalStatus.approved))
+    real_db.add(ClipRenderJob(project_id=project.id, asset_id=asset.id, version_id=version.id,
+                             requested_by=owner.id, status="queued", ranges=[], ranges_hash="snapshot"))
     real_db.flush()
 
     counts = ct.PurgeCounts()
@@ -122,6 +125,7 @@ def test_purge_version_removes_media_carousel_and_queues_s3(real_db):
     assert real_db.query(CarouselItem).filter_by(version_id=version.id).count() == 0
     assert real_db.query(Comment).filter_by(version_id=version.id).count() == 0
     assert real_db.query(Approval).filter_by(version_id=version.id).count() == 0
+    assert real_db.query(ClipRenderJob).filter_by(version_id=version.id).count() == 0
     assert real_db.query(Asset).filter_by(id=asset.id).count() == 1  # asset untouched
     queued = {(entry.s3_key, entry.is_prefix) for entry in real_db.query(TrashStorageDeletion).all()}
     assert queued == {(f"raw/{version.id}", False), ("processed/x/", True), ("thumb/x", False)}
@@ -442,6 +446,7 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
             ("project_members", "project_id"), ("activity_logs", "project_id"),
             ("personal_project_placements", "project_id"),
             ("project_automation_tokens", "project_id"),
+            ("clip_render_jobs", "project_id"),
             ("automation_bootstrap_requests", "project_id"),
             ("automation_bootstrap_renewals", "project_id"),
             # -> projects.id (database preserves historical Trash operations)
@@ -457,10 +462,12 @@ def test_gc_covers_all_inbound_fks_to_purged_tables():
         ("asset_versions", "asset_id"), ("comments", "asset_id"), ("share_links", "asset_id"),
         ("share_link_items", "asset_id"), ("asset_shares", "asset_id"), ("asset_metadata", "asset_id"),
         ("activity_logs", "asset_id"), ("notifications", "asset_id"), ("approvals", "asset_id"),
+        ("clip_render_jobs", "asset_id"),
         # -> asset_versions.id
             ("media_files", "version_id"), ("carousel_items", "version_id"),
             ("processing_outbox", "version_id"),
         ("comments", "version_id"), ("approvals", "version_id"),
+        ("clip_render_jobs", "version_id"),
         # -> media_files.id
         ("carousel_items", "media_file_id"),
         # -> comments.id

@@ -12,6 +12,7 @@ import { AnnotationOverlay } from '@/components/review/annotation-overlay'
 import { CommentPanel, useCommentView } from '@/components/review/comment-panel'
 import { CommentInput } from '@/components/review/comment-input'
 import { MobileCommentMenuItems } from '@/components/review/mobile-comment-menu'
+import { AssetClipRenderControls } from '@/components/review/clip-render-controls'
 // ApprovalBar removed for now
 import { VersionSwitcher } from '@/components/review/version-switcher'
 import { ShareDialog } from '@/components/review/share-dialog'
@@ -153,6 +154,10 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     addReaction,
     removeReaction,
   } = useComments(asset?.id || '', currentVersion?.id || '')
+  const clipRenderProps = asset?.asset_type === 'video' && currentVersion &&
+    (currentRole === 'owner' || currentRole === 'editor')
+    ? { assetId: asset.id, versionId: currentVersion.id, role: currentRole, comments }
+    : null
 
   // Keep the version list live: when a new version transcodes, revalidate so it
   // appears/updates in the switcher without a hard refresh (#118). The review
@@ -628,6 +633,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     </DropdownMenu.SubContent>
                   </DropdownMenu.Portal>
                 </DropdownMenu.Sub>
+                {clipRenderProps && <AssetClipRenderControls {...clipRenderProps} menu />}
                 {sidebarOpen && (
                   <MobileCommentMenuItems
                     view={commentView}
@@ -761,6 +767,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                     canComment={canComment}
                     view={commentView}
                     compactToolbar
+                    clipRenderControls={clipRenderProps ? <AssetClipRenderControls {...clipRenderProps} /> : undefined}
                   />
                   {canComment && (
                     <CommentInput
