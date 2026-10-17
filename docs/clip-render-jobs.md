@@ -35,22 +35,72 @@ and `message`. Codes are `version_not_ready`, `no_locked_ranges`, `invalid_range
 `duplicate_clip_number` (two locked ranges share a clip number), `job_active`, and
 `already_rendered`.
 
-The Mac last-seen time is the newest `last_used_at` of a non-revoked,
-non-deleted project automation token. It reflects automation API use, which
-the existing authentication middleware updates at most once per minute. It is
-not proof that a Mac is currently online.
+The Mac last-seen time is the newest `last_used_at` of a clip runner token
+that is not revoked, not expired, and whose creator is an active superadmin
+with an owner or editor role on this project. Project automation tokens do not
+count. Runner authentication updates `last_used_at` at most once per minute.
+It is not proof that a Mac is currently online.
 
-## Automation API
+## Clip runner token
 
-Use the existing project automation-token authentication. Each operation is
-restricted to the token's project and counts as token use.
+The Mac runner uses one instance-wide clip runner token. It works for every
+project, but it can do nothing except list, claim and finish clip render jobs.
+Every other endpoint returns HTTP 401 for it, including the comment, asset,
+project, upload, user, token and delete endpoints.
 
-- `GET /automation/clip-render-jobs?status=queued`: returns queued jobs and
-  claimed jobs with expired leases, oldest first.
-- `POST /automation/clip-render-jobs/{job_id}/claim`: atomically claims queued
+- Format: `ffcr_<token id>_<secret>`. The secret is 32 random bytes. The
+  `ffcr_` prefix is never accepted where a project automation token (`ffat_`)
+  is expected, and `ffat_` tokens are never accepted by the runner endpoints.
+- Storage: only the SHA-256 hash of the secret is stored. It is compared in
+  constant time. The full token is returned once, by the create call, and is
+  never logged.
+- Lifetime: an expiry is required, with a timezone, in the future, and at most
+  366 days away. The Admin page offers 365 days by default.
+- The token stops working when it is revoked, when it expires, or when its
+  creator is deactivated, deleted, or no longer a superadmin. Every failure
+  returns the same HTTP 401 body.
+
+Create and revoke it in **Settings → Admin → Clip runner** (superadmins only).
+After creation, copy the token, then run this one line in Terminal on the Mac.
+It creates the folder if needed and writes the file readable only by you:
+
+    (set -e; umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)
+
+Never paste the token into a chat. The management API uses the browser
+session and is superadmin only (HTTP 403 otherwise):
+
+- `POST /clip-runner-tokens`, body `{"name": "Mac clip runner", "expires_at": "<ISO 8601 with timezone>"}`:
+  returns `id`, `name`, `created_at`, `expires_at`, and `token` with HTTP 201.
+  An invalid expiry returns HTTP 400. Creation is limited to 10 per hour.
+- `GET /clip-runner-tokens`: lists the caller's tokens with `id`, `name`,
+  `created_at`, `last_used_at`, `expires_at`, and `revoked_at`. No secret or
+  hash is ever returned.
+- `DELETE /clip-runner-tokens/{id}`: revokes the token (HTTP 204, idempotent).
+  A token that is not the caller's returns HTTP 404.
+
+## Runner API
+
+Send the clip runner token as `Authorization: Bearer ffcr_...`.
+
+**Scope rule.** A job is visible, claimable and finishable only while all of
+these hold at request time: the job is not deleted; its project exists and is
+not deleted; its asset and version exist and are not deleted; and the token
+creator's effective role on that job's project is owner or editor. Public
+access or a viewer/reviewer role is not enough. A job outside this scope
+returns the same HTTP 404 as a missing job and is absent from the list.
+
+- `GET /runner/clip-render-jobs`: returns queued jobs and claimed jobs with
+  expired leases, oldest first, at most 50. Each request role-checks only the
+  first 2000 distinct projects with claimable work, ordered by their oldest
+  claimable job. Projects the creator can edit count toward that limit too, so a
+  runnable job in a project ranked below 2000 is not listed until older work is
+  claimed or cancelled. The list is advisory: claim and finish re-check the
+  creator's role on every call.
+- `POST /runner/clip-render-jobs/{job_id}/claim`: atomically claims queued
   work or reclaims an expired lease. Each successful claim returns a fresh
-  `claim_id` UUID. Competing claims return HTTP 409.
-- `POST /automation/clip-render-jobs/{job_id}/finish`, body
+  `claim_id` UUID and the version's `processing_status` (for example
+  `ready`). Competing claims return HTTP 409.
+- `POST /runner/clip-render-jobs/{job_id}/finish`, body
   `{"claim_id": "<uuid>", "status": "done", "clips_rendered": 2, "message": ""}`:
   only claimed jobs with the matching current `claim_id` can finish. A stale
   claim returns HTTP 409. `status` may be `done` or `failed`; the clip count must
@@ -65,14 +115,13 @@ The lease lasts 90 minutes from `claimed_at`. A fresh claim cannot be reclaimed.
 There is no lease renewal in this version; the 90 minute lease is intended to
 cover a render.
 The list and claim responses contain only `id`, `asset_id`, `version_id`,
-`ranges`, and `created_at`, with `claim_id` added only to the claim response.
+`ranges`, and `created_at`, with `claim_id` and `processing_status` added only
+to the claim response.
 The claim ID never appears in browser responses. Each range contains
 `comment_id`, `number`, `start`, and `end` in seconds, with the same finite,
 nonnegative, ordered timecode constraints as creation. The finish response
-contains only `id` and `clips_rendered`. No comment text, user details, media
-paths, filenames, or URLs are included in these responses. Cross-project jobs
-and jobs whose asset or version is deleted return HTTP 404 and are excluded
-from the worker list. Retention cleanup cascades job deletion when its project,
+contains only `id` and `clips_rendered`. No project id, names, comment text,
+user details, media paths, filenames, or URLs are included in these responses. Retention cleanup cascades job deletion when its project,
 asset, version, or requesting user is purged.
 
 The UI checks job status every ten seconds while a job is queued or claimed,

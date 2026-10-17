@@ -2,18 +2,17 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
-from ..models.automation_token import ProjectAutomationToken
 from ..models.clip_render_job import ClipRenderJob
 from ..models.project import ProjectRole
 from ..models.user import User
 from ..schemas.clip_render_job import ClipRenderJobCreate, ClipRenderJobResponse, LatestClipRenderJob
-from ..services.clip_render_jobs import CLIP_RENDER_LEASE, locked_snapshot, range_comments
+from ..services.clip_render_jobs import CLIP_RENDER_LEASE, locked_snapshot, range_comments, runner_last_seen_at
 from ..services.permissions import get_effective_project_role
 
 
@@ -105,11 +104,7 @@ def latest_clip_render_job(
         ClipRenderJob.version_id == version_id,
         ClipRenderJob.deleted_at.is_(None),
     ).order_by(ClipRenderJob.created_at.desc(), ClipRenderJob.id.desc()).first()
-    last_seen = db.query(func.max(ProjectAutomationToken.last_used_at)).filter(
-        ProjectAutomationToken.project_id == asset.project_id,
-        ProjectAutomationToken.revoked_at.is_(None),
-        ProjectAutomationToken.deleted_at.is_(None),
-    ).scalar()
+    last_seen = runner_last_seen_at(db, asset.project_id)
     return {"job": job, "locked_count": sum(comment.locked_at is not None for comment in comments),
             "range_count": len(comments), "worker_last_seen_at": last_seen}
 

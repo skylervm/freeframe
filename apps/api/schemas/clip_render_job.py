@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ..models.asset import ProcessingStatus
+
 
 class ClipRenderJobCreate(BaseModel):
     version_id: uuid.UUID
@@ -36,6 +38,7 @@ class WorkerClipRenderJob(BaseModel):
 
 class WorkerClipRenderClaim(WorkerClipRenderJob):
     claim_id: uuid.UUID
+    processing_status: ProcessingStatus
 
 
 class ClipRenderJobResponse(WorkerClipRenderJob):
