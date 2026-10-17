@@ -5,7 +5,7 @@ from jose import JWTError, jwt
 import bcrypt
 from sqlalchemy.orm import Session
 from ..config import settings
-from ..models.user import User, UserStatus
+from ..models.user import User
 
 BCRYPT_MAX_PASSWORD_BYTES = 72
 

@@ -12,13 +12,12 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..middleware.auth import get_current_user, get_optional_user
-from ..middleware.share_auth import get_share_link
 from ..models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
 from ..models.project import ProjectMember, ProjectRole
 from ..models.comment import Annotation, Comment, CommentAttachment, CommentReaction
 from ..models.activity import Mention, Notification, NotificationType, ActivityLog, ActivityAction
 from ..models.user import User, GuestUser
-from ..models.share import ShareLink, ShareLinkActivity, ShareActivityAction, SharePermission
+from ..models.share import ShareLinkActivity, ShareActivityAction, SharePermission
 from ..schemas.comment import (
     AnnotationResponse,
     AttachmentResponse,
@@ -38,7 +37,7 @@ from ..services import comment_export
 from ..services.permissions import (
     require_asset_access, require_comment_access, can_access_asset, validate_share_link_with_session, validate_asset_in_share,
 )
-from ..tasks.email_tasks import send_mention_email, send_comment_email
+from ..tasks.email_tasks import send_mention_email
 from ..tasks.celery_app import send_task_safe
 
 log = logging.getLogger(__name__)

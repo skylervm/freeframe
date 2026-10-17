@@ -7,7 +7,7 @@ import uuid
 from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User, UserStatus
-from ..schemas.auth import UserResponse, AdminUserResponse, UpdateUserRoleRequest
+from ..schemas.auth import AdminUserResponse, UpdateUserRoleRequest
 from .users import require_admin
 from ..tasks.celery_app import send_task_safe
 from ..tasks.cleanup_tasks import cleanup_soft_deleted

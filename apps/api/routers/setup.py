@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models.user import User, UserStatus
 from ..models.workspace import Workspace, WorkspaceMember, WorkspaceRole
 from ..services.auth_service import hash_password, create_access_token, create_refresh_token
-from ..schemas.auth import NewPassword, TokenResponse
+from ..schemas.auth import NewPassword
 from ..middleware.rate_limit import rate_limit
 
 router = APIRouter(prefix="/setup", tags=["setup"])

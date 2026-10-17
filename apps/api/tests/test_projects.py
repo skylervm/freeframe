@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock
 import pytest
 
-import pytest
 
 from apps.api.models.project import ProjectType, ProjectRole
 from apps.api.routers import projects as project_router

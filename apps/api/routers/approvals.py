@@ -1,7 +1,6 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
 
 from ..database import get_db
 from ..middleware.auth import get_current_user

@@ -10,7 +10,6 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-import apps.api.routers.folders as folders_module
 from apps.api.models.asset import Asset
 from apps.api.models.folder import Folder
 from apps.api.models.project import Project, ProjectMember, ProjectRole

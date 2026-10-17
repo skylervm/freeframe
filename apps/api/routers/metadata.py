@@ -1,7 +1,6 @@
 import secrets
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -12,7 +11,6 @@ from ..models.asset import Asset
 from ..models.metadata import AssetMetadata, Collection, CollectionShare, MetadataField
 from ..models.project import ProjectRole
 from ..models.user import User
-from ..schemas.asset import AssetResponse
 from ..schemas.metadata import (
     AssetMetadataResponse,
     AssetMetadataSet,

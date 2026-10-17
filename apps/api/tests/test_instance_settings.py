@@ -71,7 +71,6 @@ def test_upload_guard_error_both_pass(mock_db, monkeypatch):
     assert storage_service.upload_guard_error(mock_db, 123) is None
 
 
-from apps.api.services import storage as storage_service
 
 
 def test_put_settings_requires_admin(client, auth_headers, mock_db, test_user):

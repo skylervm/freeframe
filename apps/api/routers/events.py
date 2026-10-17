@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
-from ..middleware.auth import get_current_user, get_optional_user
+from ..middleware.auth import get_optional_user
 from ..services.auth_service import decode_token, get_user_by_id
 from ..models.user import User, UserStatus
 from ..services.event_service import event_stream

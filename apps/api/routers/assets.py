@@ -9,16 +9,15 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.asset import Asset, AssetVersion, MediaFile, AssetType, FileType, ProcessingStatus
-from ..models.project import Project, ProjectMember, ProjectRole
+from ..models.project import ProjectMember, ProjectRole
 from ..models.trash import TrashEntityType, TrashOperation
-from ..models.share import AssetShare
-from ..models.activity import Mention, Notification, NotificationType
+from ..models.activity import Notification, NotificationType
 from ..schemas.asset import AssetResponse, AssetVersionResponse, AssetUpdate, StreamUrlResponse, MediaFileResponse
 from ..schemas.notification import AssignmentUpdate
-from ..services.permissions import require_effective_project_role, require_asset_access, can_access_asset, can_comment_asset, get_asset_comment_capabilities, get_effective_project_role
+from ..services.permissions import require_effective_project_role, require_asset_access, can_comment_asset, get_asset_comment_capabilities, get_effective_project_role
 from ..services.s3_service import generate_presigned_get_url, build_download_filename
 from .hls_proxy import create_hls_token
-from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES, mime_to_asset_type
+from ..schemas.upload import InitiateUploadRequest, InitiateUploadResponse, ALLOWED_MIME_TYPES
 from ..services.storage import upload_guard_error
 from ..services.s3_service import create_multipart_upload
 

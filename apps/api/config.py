@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from urllib.parse import urlparse
 from pydantic import model_validator

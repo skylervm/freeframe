@@ -6,7 +6,6 @@ UUID types that are incompatible with SQLite. All DB interactions are mocked
 so tests can run without a live database or S3.
 """
 import os
-import sys
 import uuid
 import pytest
 from datetime import datetime, timezone
@@ -167,7 +166,7 @@ def auth_headers(client, mock_db, test_user):
     2. Letting the real hash/verify/JWT logic run.
     3. Returning Bearer headers.
     """
-    from apps.api.services.auth_service import create_access_token, create_refresh_token
+    from apps.api.services.auth_service import create_access_token
     # Directly generate a valid token for the test user
     token = create_access_token(str(test_user.id))
 

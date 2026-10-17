@@ -116,7 +116,7 @@ class TestGlobalRateLimitMiddleware:
     """Tests for the global rate limit middleware."""
 
     def test_exempt_paths_skipped(self):
-        from apps.api.middleware.global_rate_limit import GlobalRateLimitMiddleware, EXEMPT_PATHS
+        from apps.api.middleware.global_rate_limit import EXEMPT_PATHS
 
         assert "/health" in EXEMPT_PATHS
         assert "/docs" in EXEMPT_PATHS
