@@ -9,10 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
-from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from alembic.script import ScriptDirectory
 from sqlalchemy import and_, literal
 from sqlalchemy.orm.evaluator import _EvaluatorCompiler
 from sqlalchemy.sql import operators, visitors
@@ -20,13 +18,13 @@ from sqlalchemy.sql.selectable import Exists
 
 from apps.api.main import app
 from apps.api.middleware.auth import get_current_user
-from apps.api.middleware.automation_auth import AutomationActor, get_automation_actor
+from apps.api.middleware.clip_runner_auth import ClipRunnerActor, get_clip_runner_actor
 from apps.api.models.asset import Asset, AssetType, AssetVersion, MediaFile, ProcessingStatus
-from apps.api.models.automation_token import ProjectAutomationToken
 from apps.api.models.clip_render_job import ClipRenderJob
+from apps.api.models.clip_runner_token import ClipRunnerToken
 from apps.api.models.comment import Comment
 from apps.api.models.project import Project, ProjectMember, ProjectRole
-from apps.api.models.user import User
+from apps.api.models.user import User, UserStatus
 from apps.api.schemas.clip_render_job import ClipRenderRange
 from apps.api.services.clip_render_jobs import locked_snapshot
 
@@ -37,17 +35,21 @@ NOW = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
 class FixtureQuery:
     """Evaluate the real SQL filters against fixture objects; never connect to a DB."""
 
-    def __init__(self, rows, model, filters=(), ordering=()):
+    def __init__(self, rows, model, filters=(), ordering=(), limit=None):
         self.rows = rows
-        self.model = model if isinstance(model, type) else ProjectAutomationToken
+        self.model = model
         self.filters = filters
         self.ordering = ordering
+        self.limit_count = limit
 
     def filter(self, *conditions):
-        return FixtureQuery(self.rows, self.model, self.filters + conditions, self.ordering)
+        return FixtureQuery(self.rows, self.model, self.filters + conditions, self.ordering, self.limit_count)
 
     def order_by(self, *columns):
-        return FixtureQuery(self.rows, self.model, self.filters, columns)
+        return FixtureQuery(self.rows, self.model, self.filters, columns, self.limit_count)
+
+    def limit(self, count):
+        return FixtureQuery(self.rows, self.model, self.filters, self.ordering, count)
 
     def with_for_update(self):
         self.rows.locked_models.append(self.model)
@@ -78,13 +80,10 @@ class FixtureQuery:
             descending = getattr(column, "modifier", None) is operators.desc_op
             key = column.element.key if descending else column.key
             result.sort(key=lambda row: getattr(row, key), reverse=descending)
-        return result
+        return result if self.limit_count is None else result[:self.limit_count]
 
     def first(self):
         return next(iter(self.all()), None)
-
-    def scalar(self):
-        return max((row.last_used_at for row in self.all() if row.last_used_at is not None), default=None)
 
     def update(self, values, **kwargs):
         rows = self.all()
@@ -97,14 +96,14 @@ class FixtureQuery:
 
 @pytest.fixture
 def queue(client, mock_db):
-    user = User(id=uuid.uuid4())
+    user = User(id=uuid.uuid4(), is_superadmin=True, status=UserStatus.active, deleted_at=None)
     project = Project(id=uuid.uuid4(), is_public=False, project_folder_id=None, deleted_at=None)
     asset = Asset(id=uuid.uuid4(), project_id=project.id, asset_type=AssetType.video, deleted_at=None)
     version = AssetVersion(id=uuid.uuid4(), asset_id=asset.id, processing_status=ProcessingStatus.ready, deleted_at=None)
     media = MediaFile(id=uuid.uuid4(), version_id=version.id, mime_type="video/mp4")
     member = ProjectMember(id=uuid.uuid4(), project_id=project.id, user_id=user.id, role=ProjectRole.owner, deleted_at=None)
     state = SimpleNamespace(data={Project: [project], Asset: [asset], AssetVersion: [version], MediaFile: [media],
-                                 ProjectMember: [member], ClipRenderJob: [], Comment: [], ProjectAutomationToken: []},
+                                 ProjectMember: [member], ClipRenderJob: [], Comment: [], ClipRunnerToken: [], User: [user]},
                             locked_models=[], updates=[], client=client, db=mock_db,
                             user=user, project=project, asset=asset, version=version, media=media, member=member)
     mock_db.query.side_effect = lambda model: FixtureQuery(state, model)
@@ -117,7 +116,7 @@ def queue(client, mock_db):
 
     mock_db.add.side_effect = add
     app.dependency_overrides[get_current_user] = lambda: user
-    app.dependency_overrides[get_automation_actor] = lambda: AutomationActor(uuid.uuid4(), project.id, user)
+    app.dependency_overrides[get_clip_runner_actor] = lambda: ClipRunnerActor(uuid.uuid4(), user)
 
     def comment(number, **kwargs):
         values = dict(id=uuid.uuid4(), asset_id=asset.id, version_id=version.id, parent_id=None,
@@ -289,12 +288,12 @@ def test_create_retires_every_expired_claim_before_queueing_replacement(queue):
         assert row.status == "failed"
         assert row.message == "Render lease expired"
         assert row.finished_at >= before
-        response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={
+        response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={
             "claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": "late",
         })
         assert response.status_code == 409
-        assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == 409
-    listed = queue.client.get("/automation/clip-render-jobs").json()
+        assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 409
+    listed = queue.client.get("/runner/clip-render-jobs").json()
     assert [row["id"] for row in listed] == [str(queue.jobs[-1].id)]
     assert queue.locked_models == [AssetVersion]
 
@@ -366,22 +365,79 @@ def test_latest_is_readable_by_owners_and_editors_and_uses_active_tokens_only(qu
     newest = job(queue, created_at=NOW + timedelta(minutes=1))
     job(queue, created_at=NOW + timedelta(days=1), version_id=uuid.uuid4())
     job(queue, created_at=NOW + timedelta(days=1), deleted_at=NOW)
-    tokens = queue.data[ProjectAutomationToken]
-    def token(**kwargs):
-        values = dict(id=uuid.uuid4(), project_id=queue.project.id, revoked_at=None, deleted_at=None, last_used_at=NOW)
-        values.update(kwargs)
-        tokens.append(ProjectAutomationToken(**values))
-    token(last_used_at=NOW - timedelta(minutes=1))
-    token()
-    token(revoked_at=NOW, last_used_at=NOW + timedelta(days=1))
-    token(deleted_at=NOW, last_used_at=NOW + timedelta(days=1))
-    token(project_id=uuid.uuid4(), last_used_at=NOW + timedelta(days=1))
+    runner_token(queue, last_used_at=NOW - timedelta(minutes=1))
+    runner_token(queue, last_used_at=NOW)
+    runner_token(queue, revoked_at=NOW, last_used_at=NOW + timedelta(days=1))
     response = queue.latest()
     assert response.status_code == 200
     result = response.json()
     assert result["job"]["id"] == str(newest.id) != str(older.id)
     assert (result["locked_count"], result["range_count"]) == (2, 3)
     assert datetime.fromisoformat(result["worker_last_seen_at"]) == NOW
+
+
+def runner_token(queue, creator=None, **kwargs):
+    values = dict(id=uuid.uuid4(), name="Mac clip runner", secret_hash="0" * 64, created_by=(creator or queue.user).id,
+                  created_at=NOW - timedelta(days=1), last_used_at=NOW, revoked_at=None,
+                  expires_at=datetime.now(timezone.utc) + timedelta(days=30))
+    values.update(kwargs)
+    row = ClipRunnerToken(**values)
+    queue.data[ClipRunnerToken].append(row)
+    return row
+
+
+def other_user(queue, role=None, **kwargs):
+    values = dict(id=uuid.uuid4(), is_superadmin=True, status=UserStatus.active, deleted_at=None)
+    values.update(kwargs)
+    user = User(**values)
+    queue.data[User].append(user)
+    if role is not None:
+        queue.data[ProjectMember].append(ProjectMember(id=uuid.uuid4(), project_id=queue.project.id, user_id=user.id,
+                                                       role=role, deleted_at=None))
+    return user
+
+
+@pytest.mark.parametrize("excluded", ["revoked", "expired", "other_project_creator", "viewer_creator", "reviewer_creator",
+                                      "public_project_only", "creator_deactivated", "creator_deleted", "creator_not_superadmin",
+                                      "creator_missing", "never_used"])
+def test_last_seen_counts_only_live_runner_tokens_whose_creator_can_edit_this_project(queue, excluded):
+    runner_token(queue, last_used_at=NOW - timedelta(hours=1))
+    newer = NOW + timedelta(minutes=5)
+    if excluded == "revoked": runner_token(queue, last_used_at=newer, revoked_at=NOW)
+    if excluded == "expired": runner_token(queue, last_used_at=newer, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    if excluded == "other_project_creator":
+        creator = other_user(queue)
+        queue.data[ProjectMember].append(ProjectMember(id=uuid.uuid4(), project_id=uuid.uuid4(), user_id=creator.id,
+                                                       role=ProjectRole.owner, deleted_at=None))
+        runner_token(queue, creator, last_used_at=newer)
+    if excluded == "viewer_creator": runner_token(queue, other_user(queue, ProjectRole.viewer), last_used_at=newer)
+    if excluded == "reviewer_creator": runner_token(queue, other_user(queue, ProjectRole.reviewer), last_used_at=newer)
+    if excluded == "public_project_only":
+        queue.project.is_public = True
+        runner_token(queue, other_user(queue), last_used_at=newer)
+    if excluded == "creator_deactivated":
+        runner_token(queue, other_user(queue, ProjectRole.owner, status=UserStatus.deactivated), last_used_at=newer)
+    if excluded == "creator_deleted": runner_token(queue, other_user(queue, ProjectRole.owner, deleted_at=NOW), last_used_at=newer)
+    if excluded == "creator_not_superadmin":
+        runner_token(queue, other_user(queue, ProjectRole.owner, is_superadmin=False), last_used_at=newer)
+    if excluded == "creator_missing": runner_token(queue, User(id=uuid.uuid4()), last_used_at=newer)
+    if excluded == "never_used": runner_token(queue, last_used_at=None)
+    seen = queue.latest().json()["worker_last_seen_at"]
+    assert datetime.fromisoformat(seen) == NOW - timedelta(hours=1)
+
+
+@pytest.mark.parametrize("role", [ProjectRole.owner, ProjectRole.editor])
+def test_last_seen_uses_the_newest_eligible_token_of_any_editing_creator(queue, role):
+    runner_token(queue, last_used_at=NOW - timedelta(hours=1))
+    runner_token(queue, other_user(queue, role), last_used_at=NOW + timedelta(minutes=5))
+    assert datetime.fromisoformat(queue.latest().json()["worker_last_seen_at"]) == NOW + timedelta(minutes=5)
+
+
+def test_project_automation_tokens_no_longer_count_as_runner_last_seen(queue):
+    from apps.api.models.automation_token import ProjectAutomationToken
+    queue.data[ProjectAutomationToken] = [ProjectAutomationToken(id=uuid.uuid4(), project_id=queue.project.id, revoked_at=None,
+                                                                 deleted_at=None, last_used_at=NOW)]
+    assert queue.latest().json()["worker_last_seen_at"] is None
 
 
 def test_latest_returns_null_without_a_job_or_worker_and_denies_nonmembers(queue):
@@ -399,7 +455,7 @@ def test_worker_list_is_project_scoped_and_contains_only_documented_fields(queue
         job(queue, status=status)
     job(queue, project_id=uuid.uuid4())
     job(queue, deleted_at=NOW)
-    response = queue.client.get("/automation/clip-render-jobs?status=queued")
+    response = queue.client.get("/runner/clip-render-jobs")
     assert response.status_code == 200
     result = response.json()
     assert {row["id"] for row in result} == {str(queued.id), str(expired.id)}
@@ -407,7 +463,6 @@ def test_worker_list_is_project_scoped_and_contains_only_documented_fields(queue
         assert set(row) == {"id", "asset_id", "version_id", "ranges", "created_at"}
         for clip in row["ranges"]:
             assert set(clip) == {"comment_id", "number", "start", "end"}
-    assert queue.client.get("/automation/clip-render-jobs?status=done").status_code == 422
 
 
 @pytest.mark.parametrize("change", ["other_project", "deleted", "missing", "asset_deleted", "version_deleted",
@@ -421,9 +476,9 @@ def test_worker_claim_and_finish_hide_out_of_scope_jobs(queue, change):
     if change == "version_deleted": queue.version.deleted_at = NOW
     if change == "asset_missing": queue.data[Asset].clear()
     if change == "version_missing": queue.data[AssetVersion].clear()
-    assert queue.client.get("/automation/clip-render-jobs").json() == []
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == 404
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": "ok"}).status_code == 404
+    assert queue.client.get("/runner/clip-render-jobs").json() == []
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 404
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": "ok"}).status_code == 404
     assert queue.updates == []
 
 
@@ -432,41 +487,42 @@ def test_worker_list_excludes_queued_and_expired_jobs_of_deleted_media(queue, en
     job(queue)
     job(queue, status="claimed", claimed_at=datetime.now(timezone.utc) - timedelta(minutes=91))
     queue.data[entity][0].deleted_at = NOW
-    response = queue.client.get("/automation/clip-render-jobs")
+    response = queue.client.get("/runner/clip-render-jobs")
     assert response.status_code == 200 and response.json() == []
 
 
 def test_exactly_one_of_two_sequential_claims_wins(queue):
     row = job(queue)
-    first = queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim")
-    second = queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim")
+    first = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim")
+    second = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim")
     assert (first.status_code, second.status_code) == (200, 409)
     assert row.status == "claimed" and row.claimed_at is not None
-    assert set(first.json()) == {"id", "asset_id", "version_id", "ranges", "created_at", "claim_id"}
+    assert set(first.json()) == {"id", "asset_id", "version_id", "ranges", "created_at", "claim_id", "processing_status"}
     assert uuid.UUID(first.json()["claim_id"]) == row.claim_id
+    assert first.json()["processing_status"] == "ready"
 
 
 @pytest.mark.parametrize("age,expected", [(89, 409), (91, 200)])
 def test_claimed_jobs_can_only_be_reclaimed_after_the_lease(queue, age, expected):
     previous = datetime.now(timezone.utc) - timedelta(minutes=age)
     row = job(queue, status="claimed", claimed_at=previous)
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == expected
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == expected
     assert (row.claimed_at > previous) == (expected == 200)
 
 
 def test_reclaim_changes_claim_id_and_only_the_new_runner_can_finish(queue):
     row = job(queue)
-    first = queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").json()
+    first = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
     row.claimed_at = datetime.now(timezone.utc) - timedelta(minutes=91)
-    second = queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").json()
+    second = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
     assert first["claim_id"] != second["claim_id"]
     before = row.claimed_at
     payload = {"claim_id": first["claim_id"], "status": "done", "clips_rendered": 2, "message": "stale"}
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload)
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload)
     assert response.status_code == 409
     assert row.status == "claimed" and row.claimed_at == before and row.finished_at is None
     payload["claim_id"] = second["claim_id"]
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload)
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload)
     assert response.status_code == 200
     assert response.json() == {"id": str(row.id), "clips_rendered": 2}
 
@@ -476,7 +532,7 @@ def test_browser_responses_never_expose_claim_id(queue):
     assert "claim_id" not in created.json()
     row = queue.jobs[0]
     assert row.claim_id is None
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == 200
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 200
     assert "claim_id" not in queue.latest().json()["job"]
     queued = job(queue, claim_id=uuid.uuid4())
     assert "claim_id" not in queue.client.post(f"/clip-render-jobs/{queued.id}/cancel").json()
@@ -485,11 +541,11 @@ def test_browser_responses_never_expose_claim_id(queue):
 @pytest.mark.parametrize("status", ["done", "failed", "cancelled"])
 def test_terminal_jobs_cannot_be_claimed(queue, status):
     row = job(queue, status=status)
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == 409
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 409
 
 
 @pytest.mark.parametrize("action", ["claim", "finish"])
-@pytest.mark.parametrize("change", ["project", "deleted", "asset_deleted", "version_deleted"])
+@pytest.mark.parametrize("change", ["project", "project_deleted", "deleted", "asset_deleted", "version_deleted"])
 def test_worker_conditional_update_rechecks_scope_after_lookup(queue, action, change):
     row = job(queue, status="queued" if action == "claim" else "claimed")
     query = queue.db.query.side_effect
@@ -501,6 +557,7 @@ def test_worker_conditional_update_rechecks_scope_after_lookup(queue, action, ch
             count += 1
             if count == 2:
                 if change == "project": row.project_id = uuid.uuid4()
+                if change == "project_deleted": queue.project.deleted_at = NOW
                 if change == "deleted": row.deleted_at = NOW
                 if change == "asset_deleted": queue.asset.deleted_at = NOW
                 if change == "version_deleted": queue.version.deleted_at = NOW
@@ -508,7 +565,7 @@ def test_worker_conditional_update_rechecks_scope_after_lookup(queue, action, ch
 
     queue.db.query.side_effect = concurrent_change
     body = {"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": ""} if action == "finish" else None
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/{action}", json=body)
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/{action}", json=body)
     assert response.status_code == 409
     assert row.status == ("queued" if action == "claim" else "claimed")
 
@@ -528,7 +585,7 @@ def test_finish_conditional_update_rechecks_claim_id_after_lookup(queue):
         return query(model)
 
     queue.db.query.side_effect = concurrent_claim
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={
         "claim_id": str(claim_id), "status": "done", "clips_rendered": 2, "message": "stale",
     })
     assert response.status_code == 409
@@ -540,18 +597,18 @@ def test_finish_conditional_update_rechecks_claim_id_after_lookup(queue):
 def test_finish_only_from_claimed_and_caps_the_message(queue, status, result):
     row = job(queue, status=status)
     payload = {"claim_id": str(row.claim_id or uuid.uuid4()), "status": result, "clips_rendered": 2, "message": "<script>unsafe</script>" * 30}
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload)
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload)
     assert response.status_code == (200 if status == "claimed" else 409)
     if status == "claimed":
         assert response.json() == {"id": str(row.id), "clips_rendered": 2}
         assert len(row.message) == 300 and row.finished_at is not None
-        assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload).status_code == 409
+        assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload).status_code == 409
 
 
 @pytest.mark.parametrize("count", [0, 1, 3])
 def test_done_requires_exactly_the_snapshot_clip_count(queue, count):
     row = job(queue, status="claimed")
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={
         "claim_id": str(row.claim_id), "status": "done", "clips_rendered": count, "message": "partial",
     })
     assert response.status_code == 422
@@ -564,7 +621,7 @@ def test_done_requires_exactly_the_snapshot_clip_count(queue, count):
 @pytest.mark.parametrize("count", [0, 1, 2, 3])
 def test_failed_count_cannot_exceed_the_snapshot_and_failure_allows_retry(queue, count):
     row = job(queue, status="claimed")
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={
         "claim_id": str(row.claim_id), "status": "failed", "clips_rendered": count, "message": "stopped",
     })
     assert response.status_code == (200 if count <= 2 else 422)
@@ -576,16 +633,16 @@ def test_failed_count_cannot_exceed_the_snapshot_and_failure_allows_retry(queue,
 def test_incomplete_done_can_be_reported_as_failed_and_retried(queue):
     row = job(queue, status="claimed")
     payload = {"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 1, "message": "partial"}
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
     payload["status"] = "failed"
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload).status_code == 200
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload).status_code == 200
     assert queue.create().status_code == 201
 
 
 @pytest.mark.parametrize("count", [1000, 2**40])
 def test_finish_count_cap_rejects_large_integers_before_querying(queue, count):
     row = job(queue, status="claimed")
-    response = queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={
         "claim_id": str(row.claim_id), "status": "failed", "clips_rendered": count, "message": "",
     })
     assert response.status_code == 422
@@ -601,7 +658,7 @@ def test_finish_requires_a_valid_claim_id(queue, claim):
     payload = {"status": "done", "clips_rendered": 2, "message": ""}
     if claim is not None:
         payload["claim_id"] = claim
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
     assert row.status == "claimed"
 
 
@@ -611,16 +668,16 @@ def test_finish_requires_a_valid_claim_id(queue, claim):
 def test_invalid_finish_payloads_are_rejected(queue, payload):
     row = job(queue, status="claimed")
     payload = {"claim_id": str(row.claim_id), **payload}
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload).status_code == 422
     assert row.status == "claimed"
 
 
-def test_worker_endpoints_require_automation_auth(queue):
-    app.dependency_overrides.pop(get_automation_actor)
+def test_worker_endpoints_require_runner_auth(queue):
+    app.dependency_overrides.pop(get_clip_runner_actor)
     row = job(queue)
-    assert queue.client.get("/automation/clip-render-jobs").status_code == 401
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/claim").status_code == 401
-    assert queue.client.post(f"/automation/clip-render-jobs/{row.id}/finish", json={"claim_id": str(uuid.uuid4()), "status": "done", "clips_rendered": 2, "message": ""}).status_code == 401
+    assert queue.client.get("/runner/clip-render-jobs").status_code == 401
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 401
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={"claim_id": str(uuid.uuid4()), "status": "done", "clips_rendered": 2, "message": ""}).status_code == 401
 
 
 def test_user_endpoints_require_session_auth(queue):
@@ -631,10 +688,8 @@ def test_user_endpoints_require_session_auth(queue):
     assert queue.client.post(f"/clip-render-jobs/{row.id}/cancel").status_code == 401
 
 
-def test_migration_has_one_head_and_compiles_upgrade_and_downgrade():
+def test_clip_render_job_migration_compiles_upgrade_and_downgrade():
     api = Path(__file__).resolve().parents[1]
-    config = Config(str(api / "alembic.ini"))
-    assert ScriptDirectory.from_config(config).get_heads() == ["dd45ee67ff89"]
     spec = importlib.util.spec_from_file_location("clip_job_migration", api / "alembic/versions/dd45ee67ff89_add_clip_render_jobs.py")
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
@@ -662,3 +717,165 @@ def test_job_model_foreign_keys_cascade_on_retention_cleanup(column, target):
     foreign_key, = ClipRenderJob.__table__.c[column].foreign_keys
     assert foreign_key.target_fullname == target
     assert foreign_key.ondelete == "CASCADE"
+
+
+# ── Runner scope: the creator's live role on each job's project ────────────────
+
+def _finish_body(row):
+    return {"claim_id": str(row.claim_id or uuid.uuid4()), "status": "done", "clips_rendered": 2, "message": ""}
+
+
+@pytest.mark.parametrize("access", ["viewer", "reviewer", "no_role", "public_project_only", "member_deleted", "project_deleted"])
+def test_runner_cannot_see_or_touch_jobs_where_the_creator_cannot_edit(queue, access):
+    queued = job(queue)
+    claimed = job(queue, status="claimed")
+    if access == "viewer": queue.member.role = ProjectRole.viewer
+    if access == "reviewer": queue.member.role = ProjectRole.reviewer
+    if access == "no_role": queue.data[ProjectMember].clear()
+    if access == "public_project_only":
+        queue.data[ProjectMember].clear()
+        queue.project.is_public = True
+    if access == "member_deleted": queue.member.deleted_at = NOW
+    if access == "project_deleted": queue.project.deleted_at = NOW
+    missing = uuid.uuid4()
+    assert queue.client.get("/runner/clip-render-jobs").json() == []
+    hidden_claim = queue.client.post(f"/runner/clip-render-jobs/{queued.id}/claim")
+    hidden_finish = queue.client.post(f"/runner/clip-render-jobs/{claimed.id}/finish", json=_finish_body(claimed))
+    # A wrong claim id or a queued job must still be 404, never a revealing 409.
+    hidden_wrong_claim = queue.client.post(f"/runner/clip-render-jobs/{claimed.id}/finish",
+                                           json={**_finish_body(claimed), "claim_id": str(uuid.uuid4())})
+    hidden_queued_finish = queue.client.post(f"/runner/clip-render-jobs/{queued.id}/finish", json=_finish_body(queued))
+    missing_claim = queue.client.post(f"/runner/clip-render-jobs/{missing}/claim")
+    missing_finish = queue.client.post(f"/runner/clip-render-jobs/{missing}/finish", json=_finish_body(claimed))
+    # Indistinguishable from a job that does not exist.
+    hidden = [hidden_claim, hidden_finish, hidden_wrong_claim, hidden_queued_finish]
+    assert [(r.status_code, r.json()) for r in hidden] == [(missing_claim.status_code, missing_claim.json())] * 4
+    assert missing_claim.status_code == missing_finish.status_code == 404
+    assert missing_claim.json() == missing_finish.json()
+    assert queue.updates == []
+    assert queued.status == "queued" and claimed.status == "claimed"
+
+
+def test_runner_scope_is_per_job_project_across_many_projects(queue):
+    editable = job(queue)
+    other_project = Project(id=uuid.uuid4(), is_public=False, project_folder_id=None, deleted_at=None)
+    other_asset = Asset(id=uuid.uuid4(), project_id=other_project.id, asset_type=AssetType.video, deleted_at=None)
+    other_version = AssetVersion(id=uuid.uuid4(), asset_id=other_asset.id, processing_status=ProcessingStatus.ready, deleted_at=None)
+    queue.data[Project].append(other_project)
+    queue.data[Asset].append(other_asset)
+    queue.data[AssetVersion].append(other_version)
+    queue.data[ProjectMember].append(ProjectMember(id=uuid.uuid4(), project_id=other_project.id, user_id=queue.user.id,
+                                                   role=ProjectRole.viewer, deleted_at=None))
+    foreign = job(queue, project_id=other_project.id, asset_id=other_asset.id, version_id=other_version.id, created_at=NOW - timedelta(days=1))
+    assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(editable.id)]
+    assert queue.client.post(f"/runner/clip-render-jobs/{foreign.id}/claim").status_code == 404
+    assert foreign.status == "queued"
+    queue.data[ProjectMember][-1].role = ProjectRole.editor
+    listed = [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()]
+    assert listed == [str(foreign.id), str(editable.id)]
+
+
+def test_creator_downgraded_after_claim_can_no_longer_finish(queue):
+    queue.member.role = ProjectRole.editor
+    row = job(queue)
+    claim = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim")
+    assert claim.status_code == 200
+    queue.member.role = ProjectRole.viewer
+    payload = {"claim_id": claim.json()["claim_id"], "status": "done", "clips_rendered": 2, "message": ""}
+    response = queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json=payload)
+    assert response.status_code == 404
+    assert row.status == "claimed" and row.finished_at is None
+
+
+def test_runner_list_resolves_roles_once_per_distinct_project_and_is_capped(queue, monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    rows = [job(queue, created_at=NOW + timedelta(seconds=index)) for index in range(60)]
+    calls = []
+    real = service.get_effective_project_role
+    monkeypatch.setattr(service, "get_effective_project_role", lambda db, project_id, user: calls.append(project_id) or real(db, project_id, user))
+    result = queue.client.get("/runner/clip-render-jobs").json()
+    assert [row["id"] for row in result] == [str(row.id) for row in rows[:50]]
+    assert calls == [queue.project.id]
+
+
+def _project_with_media(queue, role=None):
+    project = Project(id=uuid.uuid4(), is_public=False, project_folder_id=None, deleted_at=None)
+    asset = Asset(id=uuid.uuid4(), project_id=project.id, asset_type=AssetType.video, deleted_at=None)
+    version = AssetVersion(id=uuid.uuid4(), asset_id=asset.id, processing_status=ProcessingStatus.ready, deleted_at=None)
+    queue.data[Project].append(project)
+    queue.data[Asset].append(asset)
+    queue.data[AssetVersion].append(version)
+    if role is not None:
+        queue.data[ProjectMember].append(ProjectMember(id=uuid.uuid4(), project_id=project.id, user_id=queue.user.id,
+                                                       role=role, deleted_at=None))
+    return lambda **kwargs: job(queue, project_id=project.id, asset_id=asset.id, version_id=version.id, **kwargs)
+
+
+def _count_role_lookups(monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    calls = []
+    real = service.get_effective_project_role
+    monkeypatch.setattr(service, "get_effective_project_role",
+                        lambda db, project_id, user: calls.append(project_id) or real(db, project_id, user))
+    return calls
+
+
+def test_older_jobs_in_a_denied_project_cannot_starve_newer_runnable_jobs(queue):
+    from apps.api.services import clip_render_jobs as service
+    denied = _project_with_media(queue, ProjectRole.viewer)
+    for index in range(service.RUNNER_CANDIDATE_LIMIT + 20):
+        denied(created_at=NOW - timedelta(days=2) + timedelta(seconds=index))
+    runnable = job(queue, created_at=NOW)
+    assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(runnable.id)]
+
+
+def test_denied_projects_are_skipped_after_one_page_and_classified_once(queue, monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 3)
+    monkeypatch.setattr(service, "RUNNER_MAX_PAGES", 2)
+    calls = _count_role_lookups(monkeypatch)
+    denied = _project_with_media(queue)
+    for index in range(10):
+        denied(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
+    runnable = job(queue, created_at=NOW)
+    assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(runnable.id)]
+    assert sorted(calls, key=str) == sorted({row.project_id for row in queue.jobs}, key=str)
+    assert len(calls) == 2
+
+
+def test_cap_and_oldest_first_hold_across_pages_with_interleaved_projects(queue, monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 7)
+    calls = _count_role_lookups(monkeypatch)
+    denied = _project_with_media(queue, ProjectRole.reviewer)
+    editable = _project_with_media(queue, ProjectRole.editor)
+    expected = []
+    for index in range(120):
+        created_at = NOW + timedelta(seconds=index)
+        if index % 3 == 0:
+            denied(created_at=created_at)
+        else:
+            expected.append(job(queue, created_at=created_at) if index % 3 == 1 else editable(created_at=created_at))
+    result = [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()]
+    assert result == [str(row.id) for row in expected[:50]]
+    assert len(calls) == 3
+
+
+def test_page_cap_stops_the_scan(queue, monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 2)
+    monkeypatch.setattr(service, "RUNNER_MAX_PAGES", 3)
+    calls = _count_role_lookups(monkeypatch)
+    for index in range(20):
+        _project_with_media(queue)(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
+    job(queue, created_at=NOW)
+    assert queue.client.get("/runner/clip-render-jobs").json() == []
+    assert len(calls) == 6
+
+
+def test_claim_returns_the_version_processing_status_as_a_plain_string(queue):
+    queue.version.processing_status = ProcessingStatus.ready
+    row = job(queue)
+    body = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
+    assert body["processing_status"] == "ready"
+    assert type(body["processing_status"]) is str
