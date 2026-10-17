@@ -115,7 +115,7 @@ describe('ClipRunnerTab', () => {
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument()
     expect(
       screen.getByText(
-        '(umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)',
+        '(set -e; umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)',
       ),
     ).toBeInTheDocument()
     expect(screen.getByText(/never paste the token into a chat/i)).toBeInTheDocument()

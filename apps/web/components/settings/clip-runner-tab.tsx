@@ -7,13 +7,10 @@ import { copyToClipboard } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuthStore } from "@/stores/auth-store";
+import { SAVE_COMMAND } from "./clip-runner-save-command";
 
 const TOKENS_KEY = "/clip-runner-tokens";
 const MAX_LIFETIME_DAYS = 365;
-const SAVE_COMMAND =
-  // One line, no &&: the file is created private (umask 077) and the folder may not exist yet.
-  "(umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)";
-
 interface ClipRunnerToken {
   id: string;
   name: string;
