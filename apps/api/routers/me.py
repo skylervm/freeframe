@@ -1,7 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from ..database import get_db
@@ -11,10 +10,10 @@ from ..models.asset import Asset
 from ..models.folder import Folder
 from ..models.project import Project
 from ..models.share import AssetShare
-from ..models.activity import Mention, Notification
+from ..models.activity import Mention
 from ..models.comment import Comment
-from ..schemas.asset import AssetResponse, NotificationResponse
-from ..routers.assets import _build_asset_response, _build_asset_responses_bulk
+from ..schemas.asset import AssetResponse
+from ..routers.assets import _build_asset_responses_bulk
 from ..services.permissions import get_accessible_project_roles, get_asset_comment_capabilities
 from ..services.search import escape_like
 

@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 import uuid
 from datetime import datetime
 from typing import Optional, Literal
-from ..models.share import SharePermission, ShareVisibility
+from ..models.share import SharePermission
 
 
 class ShareLinkAppearance(BaseModel):

@@ -7,7 +7,7 @@ from ..database import get_db
 from ..schemas.auth import UserResponse, AdminUserResponse, InviteRequest, UpdateProfileRequest
 from ..models.user import User, UserStatus
 from ..middleware.auth import get_current_user
-from ..services.auth_service import hash_password, get_user_by_email
+from ..services.auth_service import get_user_by_email
 from ..tasks.email_tasks import send_invite_email
 from ..tasks.celery_app import send_task_safe
 from ..config import settings

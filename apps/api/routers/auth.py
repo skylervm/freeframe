@@ -2,12 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 import uuid
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from ..database import get_db
 from ..schemas.auth import (
     LoginRequest, TokenResponse,
-    RefreshRequest, UserResponse, InviteRequest,
-    SendMagicCodeRequest, SendMagicCodeResponse,
+    RefreshRequest, UserResponse, SendMagicCodeRequest, SendMagicCodeResponse,
     VerifyMagicCodeRequest, SetPasswordRequest,
     AcceptInviteRequest, InviteInfoResponse,
     ChangePasswordRequest,
@@ -22,7 +21,7 @@ from ..services.redis_service import (
     generate_magic_code, store_magic_code, verify_magic_code as redis_verify_magic_code,
     MAGIC_CODE_EXPIRY_SECONDS,
 )
-from ..tasks.email_tasks import send_magic_code_email, send_invite_email
+from ..tasks.email_tasks import send_magic_code_email
 from ..tasks.celery_app import send_task_safe
 from ..models.user import User, UserStatus
 from ..middleware.auth import get_current_user

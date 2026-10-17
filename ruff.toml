@@ -1,0 +1,20 @@
+# Bug-finding rules only. Style is out of scope: see ~/.ai/reference/lint-baseline.md.
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = ["E741", "B904", "B905", "B008"]
+
+# Findings left unfixed on purpose (see PR): they are re-exports, test layout or
+# style-shaped, and fixing them is a code change, not setup.
+[lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"apps/api/tests/*" = ["E701", "E702", "E402"]
+"apps/api/alembic/env.py" = ["E402"]
+"apps/api/tasks/celery_app.py" = ["E402"]
+"apps/api/middleware/setup_guard.py" = ["E712"]
+"apps/api/routers/notifications.py" = ["E712"]
+"apps/api/routers/setup.py" = ["E712"]
+"apps/api/tests/test_automation_routes.py" = ["F841"]
+"apps/api/tests/test_cleanup_soft_deleted.py" = ["F841"]
+"apps/api/tests/test_clip_render_jobs.py" = ["B023"]
+"apps/api/tests/test_clip_runner_tokens.py" = ["B017", "F811"]
+"packages/transcoder/ffmpeg_transcoder.py" = ["F841"]

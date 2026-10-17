@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import Enum as PyEnum
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Enum, ForeignKey, Float, Integer, BigInteger, func, Text, UniqueConstraint
+from sqlalchemy import String, Boolean, DateTime, ForeignKey, Float, Integer, BigInteger, func, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 try:

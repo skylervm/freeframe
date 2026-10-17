@@ -2,7 +2,6 @@ import logging
 import os
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 import uuid
 from datetime import datetime, timezone

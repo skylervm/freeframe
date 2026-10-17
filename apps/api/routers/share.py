@@ -15,7 +15,7 @@ from ..middleware.rate_limit import rate_limit
 from ..models.user import User
 from ..models.asset import Asset
 from ..models.folder import Folder
-from ..models.share import AssetShare, ShareLink, ShareLinkItem, SharePermission, ShareLinkActivity, ShareActivityAction
+from ..models.share import AssetShare, ShareLink, ShareLinkItem, ShareLinkActivity, ShareActivityAction
 from ..models.activity import ActivityLog, ActivityAction
 from ..models.branding import ProjectBranding
 from ..models.asset import AssetVersion, AssetType, MediaFile, ProcessingStatus

@@ -1,13 +1,9 @@
-import asyncio
 import json
-import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Optional
-import boto3
-from botocore.config import Config
 from .base import BaseTranscoder, TranscodeJob, TranscodeResult, VideoMetadata
 
 
@@ -185,7 +181,7 @@ class FFmpegTranscoder(BaseTranscoder):
                 if has_audio:
                     ffmpeg_cmd += ["-map", "a:0"]
                 ffmpeg_cmd += [
-                    f"-c:v:{i}", "libx264", f"-crf", str(crf), "-preset", "fast",
+                    f"-c:v:{i}", "libx264", "-crf", str(crf), "-preset", "fast",
                     "-force_key_frames", "expr:gte(t,n_forced*2)",
                 ]
 

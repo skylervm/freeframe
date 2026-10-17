@@ -16,7 +16,7 @@ from ..schemas.branding import (
     WatermarkResponse,
     WatermarkImageUploadResponse,
 )
-from ..services.permissions import require_effective_project_role, require_asset_access
+from ..services.permissions import require_effective_project_role
 from ..services import s3_service
 from ..config import settings
 

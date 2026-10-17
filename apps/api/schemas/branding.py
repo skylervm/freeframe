@@ -1,7 +1,7 @@
 import re
 from typing import Optional, Literal
 from uuid import UUID
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, field_validator
 
 
 HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')

@@ -1,8 +1,8 @@
 """Dev seed script — creates demo org, users, and project."""
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import uuid
 import bcrypt
 from apps.api.models.user import User, UserStatus
 from apps.api.models.organization import Organization, OrgMember, OrgRole
