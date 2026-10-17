@@ -8,9 +8,10 @@ import hashlib
 import hmac
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -21,6 +22,9 @@ CLIP_RUNNER_TOKEN_PREFIX = "ffcr"
 # Compared against when no token row matches, so a missing id costs the same
 # hash-and-compare work as a wrong secret.
 _DUMMY_HASH = hashlib.sha256(b"clip-runner-token-not-found").hexdigest()
+# Looked up when no token row matches, so every failure runs the creator query.
+_DUMMY_USER_ID = uuid.UUID(int=0)
+LAST_USED_INTERVAL = timedelta(seconds=60)
 
 
 @dataclass(frozen=True)
@@ -59,18 +63,32 @@ def get_clip_runner_actor(
 ) -> ClipRunnerActor:
     token_id, secret = _parse(authorization)
     now = datetime.now(timezone.utc)
-    token = db.query(ClipRunnerToken).filter(
-        ClipRunnerToken.id == token_id,
-        ClipRunnerToken.revoked_at.is_(None),
-        ClipRunnerToken.expires_at > now,
-    ).first()
+    # Every well-formed credential does the same work whatever is wrong with it:
+    # one token lookup, one constant-time compare, one creator lookup. All
+    # conditions are then judged together, so timing does not reveal which failed.
+    token = db.query(ClipRunnerToken).filter(ClipRunnerToken.id == token_id).first()
     secret_matches = hmac.compare_digest(token.secret_hash if token else _DUMMY_HASH, hash_clip_runner_secret(secret))
-    if not token or not secret_matches:
+    user = db.query(User).filter(
+        User.id == (token.created_by if token else _DUMMY_USER_ID),
+        User.deleted_at.is_(None),
+    ).first()
+    checks = [
+        token is not None,
+        secret_matches,
+        token is not None and token.revoked_at is None,
+        token is not None and token.expires_at > now,
+        user is not None,
+        user is not None and user.deleted_at is None,
+        user is not None and user.status == UserStatus.active,
+        user is not None and user.is_superadmin is True,
+    ]
+    if not all(checks):
         raise _unauthorized()
-    user = db.query(User).filter(User.id == token.created_by, User.deleted_at.is_(None)).first()
-    if not user or user.deleted_at is not None or user.status != UserStatus.active or user.is_superadmin is not True:
-        raise _unauthorized()
-    if not token.last_used_at or (now - token.last_used_at).total_seconds() >= 60:
-        token.last_used_at = now
+    # Atomic once-per-minute throttle: only a stale or empty timestamp is written.
+    changed = db.query(ClipRunnerToken).filter(
+        ClipRunnerToken.id == token.id,
+        or_(ClipRunnerToken.last_used_at.is_(None), ClipRunnerToken.last_used_at < now - LAST_USED_INTERVAL),
+    ).update({"last_used_at": now}, synchronize_session=False)
+    if changed:
         db.commit()
     return ClipRunnerActor(token_id=token.id, user=user)

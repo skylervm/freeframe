@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..models.asset import Asset, AssetVersion
@@ -87,10 +87,10 @@ def locked_snapshot(comments: list[Comment]) -> tuple[list[dict], str]:
 
 RUNNER_ROLES = (ProjectRole.owner, ProjectRole.editor)
 RUNNER_LIST_LIMIT = 50
-# Rows read per page, and the page cap, bound the work of one list request.
-RUNNER_CANDIDATE_LIMIT = 500
-RUNNER_MAX_PAGES = 20
-RUNNER_LAST_SEEN_TOKEN_LIMIT = 50
+# Distinct projects with claimable jobs that one list request role-checks.
+RUNNER_PROJECT_SCAN_LIMIT = 2000
+# Distinct token creators one last-seen lookup checks.
+RUNNER_LAST_SEEN_CREATOR_LIMIT = 100
 
 
 def can_run_project_jobs(db: Session, project_id: uuid.UUID, user: User) -> bool:
@@ -99,7 +99,11 @@ def can_run_project_jobs(db: Session, project_id: uuid.UUID, user: User) -> bool
 
 def _live_jobs(db: Session):
     """Jobs whose project, asset and version all still exist and are not deleted."""
-    return db.query(ClipRenderJob).filter(
+    return db.query(ClipRenderJob).filter(*_live_job_conditions())
+
+
+def _live_job_conditions() -> tuple:
+    return (
         ClipRenderJob.deleted_at.is_(None),
         select(Project.id).where(
             Project.id == ClipRenderJob.project_id,
@@ -121,39 +125,20 @@ def _live_jobs(db: Session):
 def list_runner_jobs(db: Session, user: User) -> list[ClipRenderJob]:
     """Oldest-first claimable jobs the creator can run, at most RUNNER_LIST_LIMIT.
 
-    Pages by (created_at, id) and excludes projects already found to be denied,
-    so jobs in projects the creator cannot edit cannot hide newer runnable work.
-    Each distinct project is role-checked once, never per row.
+    Scans PROJECTS, not jobs: any number of jobs in a project the creator cannot
+    edit costs one role check and cannot hide newer runnable work.
     """
     now = datetime.now(timezone.utc)
-    allowed: set[uuid.UUID] = set()
-    denied: set[uuid.UUID] = set()
-    visible: list[ClipRenderJob] = []
-    visible_ids: set[uuid.UUID] = set()
-    cursor: tuple[datetime, uuid.UUID] | None = None
-    for _ in range(RUNNER_MAX_PAGES):
-        query = _live_jobs(db).filter(claimable_jobs(now))
-        if denied:
-            query = query.filter(ClipRenderJob.project_id.not_in(list(denied)))
-        if cursor:
-            created_at, job_id = cursor
-            query = query.filter(or_(
-                ClipRenderJob.created_at > created_at,
-                and_(ClipRenderJob.created_at == created_at, ClipRenderJob.id > job_id),
-            ))
-        page = query.order_by(ClipRenderJob.created_at, ClipRenderJob.id).limit(RUNNER_CANDIDATE_LIMIT).all()
-        for job in page:
-            if job.project_id not in allowed and job.project_id not in denied:
-                (allowed if can_run_project_jobs(db, job.project_id, user) else denied).add(job.project_id)
-            if job.project_id in allowed and job.id not in visible_ids:
-                visible_ids.add(job.id)
-                visible.append(job)
-                if len(visible) >= RUNNER_LIST_LIMIT:
-                    return visible
-        if len(page) < RUNNER_CANDIDATE_LIMIT:
-            break
-        cursor = (page[-1].created_at, page[-1].id)
-    return visible
+    oldest = func.min(ClipRenderJob.created_at)
+    projects = db.query(ClipRenderJob.project_id, oldest).filter(
+        *_live_job_conditions(), claimable_jobs(now),
+    ).group_by(ClipRenderJob.project_id).order_by(oldest, ClipRenderJob.project_id).limit(RUNNER_PROJECT_SCAN_LIMIT).all()
+    allowed = [project_id for project_id, _ in projects if can_run_project_jobs(db, project_id, user)]
+    if not allowed:
+        return []
+    return _live_jobs(db).filter(
+        claimable_jobs(now), ClipRenderJob.project_id.in_(allowed),
+    ).order_by(ClipRenderJob.created_at, ClipRenderJob.id).limit(RUNNER_LIST_LIMIT).all()
 
 
 def _runner_job(db: Session, job_id: uuid.UUID, user: User) -> ClipRenderJob:
@@ -207,25 +192,29 @@ def finish_runner_job(db: Session, job_id: uuid.UUID, body: ClipRenderJobFinish,
 
 
 def runner_last_seen_at(db: Session, project_id: uuid.UUID) -> datetime | None:
-    """Newest use of a live runner token whose creator can run this project's jobs."""
+    """Newest use of a live runner token whose creator can run this project's jobs.
+
+    Groups by creator BEFORE checking eligibility, so many newer tokens of an
+    ineligible creator cannot hide an eligible one.
+    """
     now = datetime.now(timezone.utc)
-    tokens = db.query(ClipRunnerToken).filter(
+    newest_use = func.max(ClipRunnerToken.last_used_at)
+    creators = db.query(ClipRunnerToken.created_by, newest_use).filter(
         ClipRunnerToken.revoked_at.is_(None),
         ClipRunnerToken.expires_at > now,
         ClipRunnerToken.last_used_at.is_not(None),
-    ).order_by(ClipRunnerToken.last_used_at.desc()).limit(RUNNER_LAST_SEEN_TOKEN_LIMIT).all()
-    allowed: dict[uuid.UUID, bool] = {}
-    for token in tokens:
-        if token.created_by not in allowed:
-            # Same creator rules as runner authentication: a token that cannot
-            # authenticate is not a working runner.
-            creator = db.query(User).filter(
-                User.id == token.created_by,
-                User.deleted_at.is_(None),
-                User.status == UserStatus.active,
-                User.is_superadmin.is_(True),
-            ).first()
-            allowed[token.created_by] = bool(creator) and can_run_project_jobs(db, project_id, creator)
-        if allowed[token.created_by]:
-            return token.last_used_at
-    return None
+    ).group_by(ClipRunnerToken.created_by).order_by(newest_use.desc(), ClipRunnerToken.created_by).limit(
+        RUNNER_LAST_SEEN_CREATOR_LIMIT).all()
+    seen = None
+    for creator_id, last_used_at in creators:
+        # Same creator rules as runner authentication: a token that cannot
+        # authenticate is not a working runner.
+        creator = db.query(User).filter(
+            User.id == creator_id,
+            User.deleted_at.is_(None),
+            User.status == UserStatus.active,
+            User.is_superadmin.is_(True),
+        ).first()
+        if creator and can_run_project_jobs(db, project_id, creator) and (seen is None or last_used_at > seen):
+            seen = last_used_at
+    return seen

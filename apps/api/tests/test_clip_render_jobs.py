@@ -35,21 +35,41 @@ NOW = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
 class FixtureQuery:
     """Evaluate the real SQL filters against fixture objects; never connect to a DB."""
 
-    def __init__(self, rows, model, filters=(), ordering=(), limit=None):
+    def __init__(self, rows, *entities):
         self.rows = rows
-        self.model = model
-        self.filters = filters
-        self.ordering = ordering
-        self.limit_count = limit
+        # Column queries (e.g. `query(Job.project_id, func.min(Job.created_at))`)
+        # filter the entity's model rows, then project them into tuples.
+        self.entities = () if isinstance(entities[0], type) else entities
+        self.model = entities[0] if isinstance(entities[0], type) else entities[0].class_
+        self.filters, self.ordering, self.limit_count, self.grouping = (), (), None, None
+
+    def _copy(self, **changes):
+        query = FixtureQuery.__new__(FixtureQuery)
+        query.__dict__.update(self.__dict__, **changes)
+        return query
 
     def filter(self, *conditions):
-        return FixtureQuery(self.rows, self.model, self.filters + conditions, self.ordering, self.limit_count)
+        return self._copy(filters=self.filters + conditions)
 
     def order_by(self, *columns):
-        return FixtureQuery(self.rows, self.model, self.filters, columns, self.limit_count)
+        return self._copy(ordering=columns)
 
     def limit(self, count):
-        return FixtureQuery(self.rows, self.model, self.filters, self.ordering, count)
+        return self._copy(limit_count=count)
+
+    def group_by(self, column):
+        return self._copy(grouping=column)
+
+    @staticmethod
+    def _value(rows, expression):
+        """Evaluate a selected/ordered column or min/max aggregate over a group of rows."""
+        expression = getattr(expression, "element", expression) if expression.__class__.__name__ == "Label" else expression
+        name = getattr(expression, "name", None)
+        if name in ("min", "max"):
+            key = list(expression.clauses)[0].key
+            values = [getattr(row, key) for row in rows if getattr(row, key) is not None]
+            return (min if name == "min" else max)(values, default=None)
+        return getattr(rows[0], expression.key)
 
     def with_for_update(self):
         self.rows.locked_models.append(self.model)
@@ -76,11 +96,21 @@ class FixtureQuery:
             conditions = visitors.replacement_traverse(and_(*self.filters), {}, replace_exists)
             if _EvaluatorCompiler(self.model).process(conditions)(row):
                 result.append(row)
+        groups = [[row] for row in result]
+        if self.grouping is not None:
+            keyed = {}
+            for row in result:
+                keyed.setdefault(getattr(row, self.grouping.key), []).append(row)
+            groups = list(keyed.values())
         for column in reversed(self.ordering):
             descending = getattr(column, "modifier", None) is operators.desc_op
-            key = column.element.key if descending else column.key
-            result.sort(key=lambda row: getattr(row, key), reverse=descending)
-        return result if self.limit_count is None else result[:self.limit_count]
+            expression = column.element if descending else column
+            groups.sort(key=lambda group: self._value(group, expression), reverse=descending)
+        if self.limit_count is not None:
+            groups = groups[:self.limit_count]
+        if not self.entities:
+            return [group[0] for group in groups]
+        return [tuple(self._value(group, entity) for entity in self.entities) for group in groups]
 
     def first(self):
         return next(iter(self.all()), None)
@@ -106,7 +136,7 @@ def queue(client, mock_db):
                                  ProjectMember: [member], ClipRenderJob: [], Comment: [], ClipRunnerToken: [], User: [user]},
                             locked_models=[], updates=[], client=client, db=mock_db,
                             user=user, project=project, asset=asset, version=version, media=media, member=member)
-    mock_db.query.side_effect = lambda model: FixtureQuery(state, model)
+    mock_db.query.side_effect = lambda *entities: FixtureQuery(state, *entities)
 
     def add(row):
         if isinstance(row, ClipRenderJob):
@@ -820,33 +850,50 @@ def _count_role_lookups(monkeypatch):
     return calls
 
 
-def test_older_jobs_in_a_denied_project_cannot_starve_newer_runnable_jobs(queue):
-    from apps.api.services import clip_render_jobs as service
+def test_600_older_jobs_in_one_denied_project_cannot_starve_a_newer_runnable_job(queue, monkeypatch):
+    calls = _count_role_lookups(monkeypatch)
     denied = _project_with_media(queue, ProjectRole.viewer)
-    for index in range(service.RUNNER_CANDIDATE_LIMIT + 20):
+    for index in range(600):
         denied(created_at=NOW - timedelta(days=2) + timedelta(seconds=index))
     runnable = job(queue, created_at=NOW)
     assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(runnable.id)]
+    assert len(calls) == 2  # one classification per project, not per job
+    assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(runnable.id)]  # stable
 
 
-def test_denied_projects_are_skipped_after_one_page_and_classified_once(queue, monkeypatch):
+def test_many_older_denied_projects_within_the_scan_limit_do_not_starve(queue, monkeypatch):
     from apps.api.services import clip_render_jobs as service
-    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 3)
-    monkeypatch.setattr(service, "RUNNER_MAX_PAGES", 2)
-    calls = _count_role_lookups(monkeypatch)
-    denied = _project_with_media(queue)
-    for index in range(10):
-        denied(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
+    monkeypatch.setattr(service, "RUNNER_PROJECT_SCAN_LIMIT", 31)
+    for index in range(30):
+        _project_with_media(queue)(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
     runnable = job(queue, created_at=NOW)
     assert [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()] == [str(runnable.id)]
-    assert sorted(calls, key=str) == sorted({row.project_id for row in queue.jobs}, key=str)
-    assert len(calls) == 2
 
 
-def test_cap_and_oldest_first_hold_across_pages_with_interleaved_projects(queue, monkeypatch):
+def test_project_scan_limit_is_applied_oldest_projects_first(queue, monkeypatch):
     from apps.api.services import clip_render_jobs as service
-    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 7)
+    monkeypatch.setattr(service, "RUNNER_PROJECT_SCAN_LIMIT", 30)
     calls = _count_role_lookups(monkeypatch)
+    denied = [_project_with_media(queue) for _ in range(30)]
+    for index, make in enumerate(denied):
+        make(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
+    job(queue, created_at=NOW)
+    assert queue.client.get("/runner/clip-render-jobs").json() == []
+    assert len(calls) == 30 and queue.project.id not in calls
+
+
+def test_each_distinct_project_is_classified_once(queue, monkeypatch):
+    calls = _count_role_lookups(monkeypatch)
+    denied = _project_with_media(queue, ProjectRole.reviewer)
+    editable = _project_with_media(queue, ProjectRole.editor)
+    for index in range(40):
+        (denied if index % 2 else editable)(created_at=NOW + timedelta(seconds=index))
+        job(queue, created_at=NOW + timedelta(seconds=index, milliseconds=500))
+    queue.client.get("/runner/clip-render-jobs")
+    assert sorted(calls, key=str) == sorted({row.project_id for row in queue.jobs}, key=str)
+
+
+def test_cap_and_oldest_first_hold_across_interleaved_allowed_and_denied_projects(queue):
     denied = _project_with_media(queue, ProjectRole.reviewer)
     editable = _project_with_media(queue, ProjectRole.editor)
     expected = []
@@ -858,19 +905,6 @@ def test_cap_and_oldest_first_hold_across_pages_with_interleaved_projects(queue,
             expected.append(job(queue, created_at=created_at) if index % 3 == 1 else editable(created_at=created_at))
     result = [row["id"] for row in queue.client.get("/runner/clip-render-jobs").json()]
     assert result == [str(row.id) for row in expected[:50]]
-    assert len(calls) == 3
-
-
-def test_page_cap_stops_the_scan(queue, monkeypatch):
-    from apps.api.services import clip_render_jobs as service
-    monkeypatch.setattr(service, "RUNNER_CANDIDATE_LIMIT", 2)
-    monkeypatch.setattr(service, "RUNNER_MAX_PAGES", 3)
-    calls = _count_role_lookups(monkeypatch)
-    for index in range(20):
-        _project_with_media(queue)(created_at=NOW - timedelta(days=1) + timedelta(seconds=index))
-    job(queue, created_at=NOW)
-    assert queue.client.get("/runner/clip-render-jobs").json() == []
-    assert len(calls) == 6
 
 
 def test_claim_returns_the_version_processing_status_as_a_plain_string(queue):
@@ -879,3 +913,23 @@ def test_claim_returns_the_version_processing_status_as_a_plain_string(queue):
     body = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
     assert body["processing_status"] == "ready"
     assert type(body["processing_status"]) is str
+
+
+def test_many_newer_tokens_of_an_ineligible_creator_do_not_hide_an_eligible_one(queue):
+    runner_token(queue, last_used_at=NOW - timedelta(hours=3))
+    viewer = other_user(queue, ProjectRole.viewer)
+    for index in range(50):
+        runner_token(queue, viewer, last_used_at=NOW + timedelta(minutes=index))
+    assert datetime.fromisoformat(queue.latest().json()["worker_last_seen_at"]) == NOW - timedelta(hours=3)
+
+
+def test_last_seen_checks_each_creator_once_and_caps_creators(queue, monkeypatch):
+    from apps.api.services import clip_render_jobs as service
+    calls = _count_role_lookups(monkeypatch)
+    for index in range(5):
+        runner_token(queue, last_used_at=NOW - timedelta(minutes=index))
+    assert datetime.fromisoformat(queue.latest().json()["worker_last_seen_at"]) == NOW
+    assert calls == [queue.project.id]  # five tokens, one creator, one check
+    monkeypatch.setattr(service, "RUNNER_LAST_SEEN_CREATOR_LIMIT", 1)
+    runner_token(queue, other_user(queue, ProjectRole.viewer), last_used_at=NOW + timedelta(minutes=1))
+    assert queue.latest().json()["worker_last_seen_at"] is None

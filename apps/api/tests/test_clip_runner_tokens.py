@@ -45,7 +45,7 @@ def _sha(secret: str) -> str:
 def _store(data):
     rows = SimpleNamespace(data=data, locked_models=[], updates=[])
     db = MagicMock()
-    db.query.side_effect = lambda model: FixtureQuery(rows, model)
+    db.query.side_effect = lambda *entities: FixtureQuery(rows, *entities)
     return db
 
 
@@ -91,14 +91,15 @@ def test_valid_runner_token_authenticates_and_records_use():
         actor.token_id = uuid.uuid4()  # frozen
 
 
-def test_last_used_is_written_at_most_once_per_minute():
+@pytest.mark.parametrize("age,writes", [(None, 1), (61, 1), (30, 0)])
+def test_last_used_is_written_atomically_at_most_once_per_minute(age, writes):
     creator = _creator()
-    recent = datetime.now(timezone.utc) - timedelta(seconds=30)
-    token = _runner_token(creator, last_used_at=recent)
+    before = None if age is None else datetime.now(timezone.utc) - timedelta(seconds=age)
+    token = _runner_token(creator, last_used_at=before)
     db = _runner_db(token, creator)
     get_clip_runner_actor(_header(token.id), db)
-    assert token.last_used_at == recent
-    db.commit.assert_not_called()
+    assert (token.last_used_at != before) == bool(writes)
+    assert db.commit.call_count == writes
 
 
 @pytest.mark.parametrize("case", ["revoked", "expired", "expires_now", "wrong_secret", "creator_deactivated",
@@ -159,18 +160,46 @@ def test_automation_dependency_rejects_a_runner_token_with_a_matching_id_and_sec
     assert error.value.status_code == 401
 
 
-def test_secret_is_compared_in_constant_time_even_for_unknown_ids(monkeypatch):
-    calls = []
+def _traced(case, monkeypatch):
+    """Run one authentication; return (outcome, models queried, compare calls)."""
+    compares = []
     real = clip_runner_auth.hmac.compare_digest
-    monkeypatch.setattr(clip_runner_auth.hmac, "compare_digest", lambda a, b: calls.append((a, b)) or real(a, b))
+    monkeypatch.setattr(clip_runner_auth.hmac, "compare_digest", lambda a, b: compares.append(1) or real(a, b))
     creator = _creator()
-    token = _runner_token(creator)
+    token = _runner_token(creator, last_used_at=datetime.now(timezone.utc) - timedelta(hours=1))
+    token_id, secret = token.id, SECRET
+    if case == "unknown_id": token_id = uuid.uuid4()
+    if case == "wrong_secret": secret = SECRET + "x"
+    if case == "revoked": token.revoked_at = datetime.now(timezone.utc)
+    if case == "expired": token.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if case == "demoted": creator.is_superadmin = False
+    if case == "deactivated": creator.status = UserStatus.deactivated
+    if case == "deleted": creator.deleted_at = datetime.now(timezone.utc)
     db = _runner_db(token, creator)
-    _rejects(_header(uuid.uuid4()), db)
-    _rejects(_header(token.id, secret="wrong"), db)
-    get_clip_runner_actor(_header(token.id), db)
-    assert len(calls) == 3
-    assert calls[2] == (token.secret_hash, _sha(SECRET))
+    queried = []
+    lookup = db.query.side_effect
+    db.query.side_effect = lambda *entities: queried.append(entities[0]) or lookup(*entities)
+    try:
+        get_clip_runner_actor(_header(token_id, secret=secret), db)
+        outcome = "ok"
+    except HTTPException as error:
+        outcome = (error.status_code, error.detail)
+    return outcome, queried, len(compares)
+
+
+FAILURES = ["unknown_id", "wrong_secret", "revoked", "expired", "demoted", "deactivated", "deleted"]
+
+
+def test_every_failure_does_the_same_database_and_hash_work_as_success(monkeypatch):
+    traces = {case: _traced(case, monkeypatch) for case in FAILURES + ["success"]}
+    for case in FAILURES:
+        outcome, queried, compares = traces[case]
+        assert outcome == (401, GENERIC_401["detail"]), case
+        assert (queried, compares) == ([ClipRunnerToken, User], 1), case
+    outcome, queried, compares = traces["success"]
+    assert outcome == "ok"
+    # Identical up to the last_used_at write, which is the only extra query.
+    assert (queried, compares) == ([ClipRunnerToken, User, ClipRunnerToken], 1)
 
 
 # ── The runner token reaches only the three runner endpoints ───────────────────
@@ -278,7 +307,7 @@ def test_runner_endpoints_return_the_same_401_body_for_a_dead_token(live_runner,
 def admin(client, mock_db):
     user = _creator()
     state = SimpleNamespace(data={ClipRunnerToken: [], User: [user]}, locked_models=[], updates=[], user=user, client=client, db=mock_db)
-    mock_db.query.side_effect = lambda model: FixtureQuery(state, model)
+    mock_db.query.side_effect = lambda *entities: FixtureQuery(state, *entities)
 
     def add(row):
         row.created_at = row.created_at or datetime.now(timezone.utc)

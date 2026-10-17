@@ -11,7 +11,8 @@ import { useAuthStore } from "@/stores/auth-store";
 const TOKENS_KEY = "/clip-runner-tokens";
 const MAX_LIFETIME_DAYS = 365;
 const SAVE_COMMAND =
-  "pbpaste > ~/.config/freeframe/clip-runner.token && chmod 600 ~/.config/freeframe/clip-runner.token";
+  // One line, no &&: the file is created private (umask 077) and the folder may not exist yet.
+  "(umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)";
 
 interface ClipRunnerToken {
   id: string;
@@ -121,7 +122,7 @@ export function ClipRunnerTab() {
           <ol className="list-decimal pl-5 text-sm text-text-secondary space-y-1">
             <li>Press Copy to copy the token.</li>
             <li>
-              On the Mac, open Terminal and run:{" "}
+              On the Mac, open Terminal and run this one line:{" "}
               <code className="font-mono text-xs text-text-primary">{SAVE_COMMAND}</code>
             </li>
             <li>Never paste the token into a chat, a ticket, or an email.</li>

@@ -61,9 +61,10 @@ project, upload, user, token and delete endpoints.
   returns the same HTTP 401 body.
 
 Create and revoke it in **Settings → Admin → Clip runner** (superadmins only).
-After creation, copy the token, then run this in Terminal on the Mac:
+After creation, copy the token, then run this one line in Terminal on the Mac.
+It creates the folder if needed and writes the file readable only by you:
 
-    pbpaste > ~/.config/freeframe/clip-runner.token && chmod 600 ~/.config/freeframe/clip-runner.token
+    (umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)
 
 Never paste the token into a chat. The management API uses the browser
 session and is superadmin only (HTTP 403 otherwise):
@@ -89,7 +90,10 @@ access or a viewer/reviewer role is not enough. A job outside this scope
 returns the same HTTP 404 as a missing job and is absent from the list.
 
 - `GET /runner/clip-render-jobs`: returns queued jobs and claimed jobs with
-  expired leases, oldest first, at most 50.
+  expired leases, oldest first, at most 50. Each request role-checks at most
+  2000 distinct projects with claimable work, oldest first, so a runnable job is
+  hidden only if more than 2000 projects the creator cannot edit have claimable
+  jobs older than it.
 - `POST /runner/clip-render-jobs/{job_id}/claim`: atomically claims queued
   work or reclaims an expired lease. Each successful claim returns a fresh
   `claim_id` UUID and the version's `processing_status` (for example

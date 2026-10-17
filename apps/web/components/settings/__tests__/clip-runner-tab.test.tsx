@@ -115,10 +115,11 @@ describe('ClipRunnerTab', () => {
     expect(screen.getByText(/shown only once/i)).toBeInTheDocument()
     expect(
       screen.getByText(
-        'pbpaste > ~/.config/freeframe/clip-runner.token && chmod 600 ~/.config/freeframe/clip-runner.token',
+        '(umask 077; mkdir -p ~/.config/freeframe; rm -f ~/.config/freeframe/clip-runner.token; pbpaste > ~/.config/freeframe/clip-runner.token)',
       ),
     ).toBeInTheDocument()
     expect(screen.getByText(/never paste the token into a chat/i)).toBeInTheDocument()
+    expect(screen.getByText(/open Terminal and run this one line/i)).toBeInTheDocument()
     // The list is revalidated from the server, never seeded with the created token.
     await waitFor(() => expect(h.mutate).toHaveBeenCalledWith())
     expect(h.keys.every((key) => key === '/clip-runner-tokens')).toBe(true)
