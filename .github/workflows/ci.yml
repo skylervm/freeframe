@@ -221,6 +221,11 @@ jobs:
       - name: Check Python syntax
         run: python -m py_compile apps/api/main.py
 
+      - name: Lint Python with Ruff
+        run: |
+          pip install ruff==0.16.9
+          ruff check .
+
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
