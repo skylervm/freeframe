@@ -1,3 +1,6 @@
+import logging
+import threading
+
 from celery import Celery
 from celery.schedules import crontab
 from kombu import Queue
@@ -100,9 +103,6 @@ celery_app.conf.beat_schedule = {
     },
 }
 
-
-import threading
-import logging
 
 _task_logger = logging.getLogger("celery.dispatch")
 

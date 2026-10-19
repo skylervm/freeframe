@@ -19,19 +19,23 @@ from apps.api.models.activity import Mention, ActivityLog, Notification, Notific
 from apps.api.models.project_folder import PersonalProjectPlacement, ProjectFolder, ProjectFolderScope
 from apps.api.models.workspace import Workspace
 from apps.api.models.trash import TrashStorageDeletion
+from apps.api.config import settings
+from apps.api.tests.conftest import _make_mock_db
 
 
 # ── seed helpers (module-level; extended by later tasks) ─────────────────────────
 
 def _user(db):
     u = User(email=f"gc-{uuid.uuid4()}@t.local", name="t")
-    db.add(u); db.flush()
+    db.add(u)
+    db.flush()
     return u
 
 
 def _project(db, owner, deleted_hours_ago=None):
     p = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(p); db.flush()
+    db.add(p)
+    db.flush()
     if deleted_hours_ago is not None:
         p.deleted_at = datetime.now(timezone.utc) - timedelta(hours=deleted_hours_ago)
         db.flush()
@@ -41,7 +45,8 @@ def _project(db, owner, deleted_hours_ago=None):
 def _asset(db, project, owner, folder=None, deleted_hours_ago=None):
     a = Asset(project_id=project.id, name="t", asset_type=AssetType.video, created_by=owner.id,
               folder_id=(folder.id if folder else None))
-    db.add(a); db.flush()
+    db.add(a)
+    db.flush()
     if deleted_hours_ago is not None:
         a.deleted_at = datetime.now(timezone.utc) - timedelta(hours=deleted_hours_ago)
         db.flush()
@@ -50,7 +55,8 @@ def _asset(db, project, owner, folder=None, deleted_hours_ago=None):
 
 def _version(db, asset, owner, status=ProcessingStatus.ready, deleted_hours_ago=None):
     v = AssetVersion(asset_id=asset.id, version_number=1, processing_status=status, created_by=owner.id)
-    db.add(v); db.flush()
+    db.add(v)
+    db.flush()
     if deleted_hours_ago is not None:
         v.deleted_at = datetime.now(timezone.utc) - timedelta(hours=deleted_hours_ago)
         db.flush()
@@ -60,7 +66,8 @@ def _version(db, asset, owner, status=ProcessingStatus.ready, deleted_hours_ago=
 def _comment(db, asset, version, owner, parent=None):
     c = Comment(asset_id=asset.id, version_id=version.id, author_id=owner.id, body="hi",
                 parent_id=(parent.id if parent else None))
-    db.add(c); db.flush()
+    db.add(c)
+    db.flush()
     return c
 
 
@@ -98,7 +105,8 @@ def _media(db, version, ftype=FileType.video, processed="processed/x/", thumb="t
     mf = MediaFile(version_id=version.id, file_type=ftype, original_filename="f.mp4",
                    mime_type="video/mp4", file_size_bytes=10, s3_key_raw=f"raw/{version.id}",
                    s3_key_processed=processed, s3_key_thumbnail=thumb)
-    db.add(mf); db.flush()
+    db.add(mf)
+    db.flush()
     return mf
 
 
@@ -110,7 +118,7 @@ def test_purge_version_removes_media_carousel_and_queues_s3(real_db):
     version = _version(real_db, asset, owner)
     mf = _media(real_db, version)
     real_db.add(CarouselItem(version_id=version.id, media_file_id=mf.id, position=0))
-    comment = _comment(real_db, asset, version, owner)
+    _comment(real_db, asset, version, owner)
     real_db.add(Approval(asset_id=asset.id, version_id=version.id, user_id=owner.id,
                          status=ApprovalStatus.approved))
     real_db.add(ClipRenderJob(project_id=project.id, asset_id=asset.id, version_id=version.id,
@@ -137,7 +145,8 @@ def _share_link(db, owner, asset=None, folder=None, project=None):
                      asset_id=(asset.id if asset else None),
                      folder_id=(folder.id if folder else None),
                      project_id=(project.id if project else None))
-    db.add(link); db.flush()
+    db.add(link)
+    db.flush()
     return link
 
 
@@ -172,7 +181,8 @@ def test_purge_asset_removes_full_subtree(real_db, monkeypatch):
     version = _version(real_db, asset, owner)
     _media(real_db, version)
     field = MetadataField(project_id=project.id, name="f", field_type=FieldType.text)
-    real_db.add(field); real_db.flush()
+    real_db.add(field)
+    real_db.flush()
     real_db.add(AssetMetadata(asset_id=asset.id, field_id=field.id, value={"v": 1}))
     link = _share_link(real_db, owner, asset=asset)
     other_link = _share_link(real_db, owner, project=project)
@@ -200,7 +210,8 @@ def test_purge_asset_removes_full_subtree(real_db, monkeypatch):
 def _folder(db, project, owner, parent=None):
     f = Folder(project_id=project.id, name=f"fld-{uuid.uuid4()}", created_by=owner.id,
                parent_id=(parent.id if parent else None))
-    db.add(f); db.flush()
+    db.add(f)
+    db.flush()
     return f
 
 
@@ -234,7 +245,8 @@ def test_purge_folder_deletes_soft_deleted_child_asset(real_db, monkeypatch):
     owner = _user(real_db)
     project = _project(real_db, owner)
     folder = _folder(real_db, project, owner)
-    folder.deleted_at = datetime.now(timezone.utc); real_db.flush()
+    folder.deleted_at = datetime.now(timezone.utc)
+    real_db.flush()
     asset = _asset(real_db, project, owner, folder=folder, deleted_hours_ago=1)
 
     counts = ct.PurgeCounts()
@@ -254,7 +266,8 @@ def test_purge_folder_skips_child_reparented_out_since_scan(real_db, monkeypatch
     owner = _user(real_db)
     project = _project(real_db, owner)
     folder = _folder(real_db, project, owner)
-    folder.deleted_at = datetime.now(timezone.utc); real_db.flush()
+    folder.deleted_at = datetime.now(timezone.utc)
+    real_db.flush()
     asset = _asset(real_db, project, owner, folder=folder, deleted_hours_ago=1)
     # Simulate a restore-to-root that happened after the outer scan listed this asset as a child.
     asset.folder_id = None
@@ -272,16 +285,18 @@ def test_purge_project_removes_everything_and_queues_s3(real_db):
 
     owner = _user(real_db)
     project = _project(real_db, owner)
-    project.poster_s3_key = "posters/p.webp"; real_db.flush()
+    project.poster_s3_key = "posters/p.webp"
+    real_db.flush()
     folder = _folder(real_db, project, owner)
-    foldered = _asset(real_db, project, owner, folder=folder)
+    _asset(real_db, project, owner, folder=folder)
     loose = _asset(real_db, project, owner)
     _version(real_db, loose, owner)
     real_db.add(ProjectBranding(project_id=project.id, logo_s3_key="branding/logo.png"))
     real_db.add(WatermarkSettings(project_id=project.id))
     real_db.add(ProjectMember(project_id=project.id, user_id=owner.id))
     workspace = Workspace(name=f"gc-workspace-{uuid.uuid4()}")
-    real_db.add(workspace); real_db.flush()
+    real_db.add(workspace)
+    real_db.flush()
     project_folder = ProjectFolder(
         workspace_id=workspace.id,
         owner_id=owner.id,
@@ -289,17 +304,20 @@ def test_purge_project_removes_everything_and_queues_s3(real_db):
         name=f"gc-folder-{uuid.uuid4()}",
         scope=ProjectFolderScope.personal,
     )
-    real_db.add(project_folder); real_db.flush()
+    real_db.add(project_folder)
+    real_db.flush()
     real_db.add(PersonalProjectPlacement(
         user_id=owner.id,
         project_id=project.id,
         folder_id=project_folder.id,
     ))
     coll = Collection(project_id=project.id, name="c", created_by=owner.id)
-    real_db.add(coll); real_db.flush()
+    real_db.add(coll)
+    real_db.flush()
     real_db.add(CollectionShare(collection_id=coll.id, token=f"c-{uuid.uuid4()}", created_by=owner.id))
     field = MetadataField(project_id=project.id, name="f", field_type=FieldType.text)
-    real_db.add(field); real_db.flush()
+    real_db.add(field)
+    real_db.flush()
     real_db.add(AssetMetadata(asset_id=loose.id, field_id=field.id, value={"v": 1}))
     _share_link(real_db, owner, project=project)
     real_db.add(ActivityLog(project_id=project.id, action="created"))
@@ -323,10 +341,6 @@ def test_purge_project_removes_everything_and_queues_s3(real_db):
     queued_keys = {entry.s3_key for entry in real_db.query(TrashStorageDeletion).all()}
     assert {"branding/logo.png", "posters/p.webp"}.issubset(queued_keys)
     assert counts.projects == 1 and counts.assets == 2 and counts.folders == 1
-
-
-from apps.api.config import settings
-from apps.api.tests.conftest import _make_mock_db
 
 
 def test_purge_soft_deleted_respects_retention_window(real_db, monkeypatch):

@@ -37,7 +37,7 @@ class SetupCompleteResponse(BaseModel):
 def _has_superadmin(db: Session) -> bool:
     """Check if any superadmin exists in the system."""
     return db.query(User).filter(
-        User.is_superadmin == True,
+        User.is_superadmin == True,  # noqa: E712 (SQL comparison)
         User.deleted_at.is_(None),
     ).first() is not None
 

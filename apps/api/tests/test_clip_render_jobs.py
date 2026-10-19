@@ -78,7 +78,7 @@ class FixtureQuery:
     def all(self):
         result = []
         for row in self.rows.data.get(self.model, []):
-            def replace_exists(expression):
+            def replace_exists(expression, row=row):
                 if not isinstance(expression, Exists):
                     return None
                 statement = expression.element.element
@@ -210,16 +210,26 @@ def test_viewer_reviewer_and_nonmember_cannot_manage_jobs(queue, role, is_public
 @pytest.mark.parametrize("change", ["asset_missing", "asset_deleted", "version_missing", "wrong_asset", "version_deleted", "audio", "processing",
                                     "media_missing", "media_other_version", "media_not_video"])
 def test_requires_an_existing_ready_video_version_of_this_asset(queue, change):
-    if change == "asset_missing": queue.data[Asset].clear()
-    if change == "asset_deleted": queue.asset.deleted_at = NOW
-    if change == "version_missing": queue.data[AssetVersion].clear()
-    if change == "wrong_asset": queue.version.asset_id = uuid.uuid4()
-    if change == "version_deleted": queue.version.deleted_at = NOW
-    if change == "audio": queue.asset.asset_type = AssetType.audio
-    if change == "processing": queue.version.processing_status = ProcessingStatus.processing
-    if change == "media_missing": queue.data[MediaFile].clear()
-    if change == "media_other_version": queue.media.version_id = uuid.uuid4()
-    if change == "media_not_video": queue.media.mime_type = "image/jpeg"
+    if change == "asset_missing":
+        queue.data[Asset].clear()
+    if change == "asset_deleted":
+        queue.asset.deleted_at = NOW
+    if change == "version_missing":
+        queue.data[AssetVersion].clear()
+    if change == "wrong_asset":
+        queue.version.asset_id = uuid.uuid4()
+    if change == "version_deleted":
+        queue.version.deleted_at = NOW
+    if change == "audio":
+        queue.asset.asset_type = AssetType.audio
+    if change == "processing":
+        queue.version.processing_status = ProcessingStatus.processing
+    if change == "media_missing":
+        queue.data[MediaFile].clear()
+    if change == "media_other_version":
+        queue.media.version_id = uuid.uuid4()
+    if change == "media_not_video":
+        queue.media.mime_type = "image/jpeg"
     response = queue.create()
     assert response.status_code == (404 if change.startswith("asset_") else 409)
     assert queue.jobs == []
@@ -331,9 +341,12 @@ def test_create_retires_every_expired_claim_before_queueing_replacement(queue):
 @pytest.mark.parametrize("change", ["other_project", "other_version", "deleted"])
 def test_create_does_not_retire_expired_claims_outside_its_version(queue, change):
     row = job(queue, status="claimed", claimed_at=datetime.now(timezone.utc) - timedelta(minutes=91))
-    if change == "other_project": row.project_id = uuid.uuid4()
-    if change == "other_version": row.version_id = uuid.uuid4()
-    if change == "deleted": row.deleted_at = NOW
+    if change == "other_project":
+        row.project_id = uuid.uuid4()
+    if change == "other_version":
+        row.version_id = uuid.uuid4()
+    if change == "deleted":
+        row.deleted_at = NOW
     assert queue.create().status_code == 201
     assert row.status == "claimed" and row.finished_at is None
 
@@ -433,25 +446,32 @@ def other_user(queue, role=None, **kwargs):
 def test_last_seen_counts_only_live_runner_tokens_whose_creator_can_edit_this_project(queue, excluded):
     runner_token(queue, last_used_at=NOW - timedelta(hours=1))
     newer = NOW + timedelta(minutes=5)
-    if excluded == "revoked": runner_token(queue, last_used_at=newer, revoked_at=NOW)
-    if excluded == "expired": runner_token(queue, last_used_at=newer, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
+    if excluded == "revoked":
+        runner_token(queue, last_used_at=newer, revoked_at=NOW)
+    if excluded == "expired":
+        runner_token(queue, last_used_at=newer, expires_at=datetime.now(timezone.utc) - timedelta(seconds=1))
     if excluded == "other_project_creator":
         creator = other_user(queue)
         queue.data[ProjectMember].append(ProjectMember(id=uuid.uuid4(), project_id=uuid.uuid4(), user_id=creator.id,
                                                        role=ProjectRole.owner, deleted_at=None))
         runner_token(queue, creator, last_used_at=newer)
-    if excluded == "viewer_creator": runner_token(queue, other_user(queue, ProjectRole.viewer), last_used_at=newer)
-    if excluded == "reviewer_creator": runner_token(queue, other_user(queue, ProjectRole.reviewer), last_used_at=newer)
+    if excluded == "viewer_creator":
+        runner_token(queue, other_user(queue, ProjectRole.viewer), last_used_at=newer)
+    if excluded == "reviewer_creator":
+        runner_token(queue, other_user(queue, ProjectRole.reviewer), last_used_at=newer)
     if excluded == "public_project_only":
         queue.project.is_public = True
         runner_token(queue, other_user(queue), last_used_at=newer)
     if excluded == "creator_deactivated":
         runner_token(queue, other_user(queue, ProjectRole.owner, status=UserStatus.deactivated), last_used_at=newer)
-    if excluded == "creator_deleted": runner_token(queue, other_user(queue, ProjectRole.owner, deleted_at=NOW), last_used_at=newer)
+    if excluded == "creator_deleted":
+        runner_token(queue, other_user(queue, ProjectRole.owner, deleted_at=NOW), last_used_at=newer)
     if excluded == "creator_not_superadmin":
         runner_token(queue, other_user(queue, ProjectRole.owner, is_superadmin=False), last_used_at=newer)
-    if excluded == "creator_missing": runner_token(queue, User(id=uuid.uuid4()), last_used_at=newer)
-    if excluded == "never_used": runner_token(queue, last_used_at=None)
+    if excluded == "creator_missing":
+        runner_token(queue, User(id=uuid.uuid4()), last_used_at=newer)
+    if excluded == "never_used":
+        runner_token(queue, last_used_at=None)
     seen = queue.latest().json()["worker_last_seen_at"]
     assert datetime.fromisoformat(seen) == NOW - timedelta(hours=1)
 
@@ -499,13 +519,20 @@ def test_worker_list_is_project_scoped_and_contains_only_documented_fields(queue
                                     "asset_missing", "version_missing"])
 def test_worker_claim_and_finish_hide_out_of_scope_jobs(queue, change):
     row = job(queue, status="claimed")
-    if change == "other_project": row.project_id = uuid.uuid4()
-    if change == "deleted": row.deleted_at = NOW
-    if change == "missing": queue.jobs.clear()
-    if change == "asset_deleted": queue.asset.deleted_at = NOW
-    if change == "version_deleted": queue.version.deleted_at = NOW
-    if change == "asset_missing": queue.data[Asset].clear()
-    if change == "version_missing": queue.data[AssetVersion].clear()
+    if change == "other_project":
+        row.project_id = uuid.uuid4()
+    if change == "deleted":
+        row.deleted_at = NOW
+    if change == "missing":
+        queue.jobs.clear()
+    if change == "asset_deleted":
+        queue.asset.deleted_at = NOW
+    if change == "version_deleted":
+        queue.version.deleted_at = NOW
+    if change == "asset_missing":
+        queue.data[Asset].clear()
+    if change == "version_missing":
+        queue.data[AssetVersion].clear()
     assert queue.client.get("/runner/clip-render-jobs").json() == []
     assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 404
     assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": "ok"}).status_code == 404
@@ -586,11 +613,16 @@ def test_worker_conditional_update_rechecks_scope_after_lookup(queue, action, ch
         if model is ClipRenderJob:
             count += 1
             if count == 2:
-                if change == "project": row.project_id = uuid.uuid4()
-                if change == "project_deleted": queue.project.deleted_at = NOW
-                if change == "deleted": row.deleted_at = NOW
-                if change == "asset_deleted": queue.asset.deleted_at = NOW
-                if change == "version_deleted": queue.version.deleted_at = NOW
+                if change == "project":
+                    row.project_id = uuid.uuid4()
+                if change == "project_deleted":
+                    queue.project.deleted_at = NOW
+                if change == "deleted":
+                    row.deleted_at = NOW
+                if change == "asset_deleted":
+                    queue.asset.deleted_at = NOW
+                if change == "version_deleted":
+                    queue.version.deleted_at = NOW
         return query(model)
 
     queue.db.query.side_effect = concurrent_change
@@ -759,14 +791,19 @@ def _finish_body(row):
 def test_runner_cannot_see_or_touch_jobs_where_the_creator_cannot_edit(queue, access):
     queued = job(queue)
     claimed = job(queue, status="claimed")
-    if access == "viewer": queue.member.role = ProjectRole.viewer
-    if access == "reviewer": queue.member.role = ProjectRole.reviewer
-    if access == "no_role": queue.data[ProjectMember].clear()
+    if access == "viewer":
+        queue.member.role = ProjectRole.viewer
+    if access == "reviewer":
+        queue.member.role = ProjectRole.reviewer
+    if access == "no_role":
+        queue.data[ProjectMember].clear()
     if access == "public_project_only":
         queue.data[ProjectMember].clear()
         queue.project.is_public = True
-    if access == "member_deleted": queue.member.deleted_at = NOW
-    if access == "project_deleted": queue.project.deleted_at = NOW
+    if access == "member_deleted":
+        queue.member.deleted_at = NOW
+    if access == "project_deleted":
+        queue.project.deleted_at = NOW
     missing = uuid.uuid4()
     assert queue.client.get("/runner/clip-render-jobs").json() == []
     hidden_claim = queue.client.post(f"/runner/clip-render-jobs/{queued.id}/claim")

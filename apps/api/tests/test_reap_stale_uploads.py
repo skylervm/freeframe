@@ -1,7 +1,14 @@
 """Tests for the stale-upload reaper and its S3 helpers."""
+import uuid
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock
 
+import apps.api.tasks.cleanup_tasks as ct
+from apps.api.models.user import User
+from apps.api.models.project import Project, ProjectType
+from apps.api.models.asset import (
+    Asset, AssetType, AssetVersion, MediaFile, FileType, ProcessingStatus,
+)
 from apps.api.services import s3_service
 
 
@@ -40,15 +47,6 @@ def test_delete_prefix_noop_when_empty(monkeypatch):
     fake.delete_objects.assert_not_called()
 
 
-import uuid
-import apps.api.tasks.cleanup_tasks as ct
-from apps.api.models.user import User
-from apps.api.models.project import Project, ProjectType
-from apps.api.models.asset import (
-    Asset, AssetType, AssetVersion, MediaFile, FileType, ProcessingStatus,
-)
-
-
 def test_reap_logic_soft_deletes_and_deletes_s3(mock_db, monkeypatch):
     """Unit: with one stale version + its media file, the reaper soft-deletes the version
     and issues best-effort S3 deletes."""
@@ -71,13 +69,17 @@ def test_reap_logic_soft_deletes_and_deletes_s3(mock_db, monkeypatch):
 
 def _seed_version(db, status, created_shift_hours):
     owner = User(email=f"reap-{uuid.uuid4()}@t.local", name="t")
-    db.add(owner); db.flush()
+    db.add(owner)
+    db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(project); db.flush()
+    db.add(project)
+    db.flush()
     asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video, created_by=owner.id)
-    db.add(asset); db.flush()
+    db.add(asset)
+    db.flush()
     v = AssetVersion(asset_id=asset.id, version_number=1, processing_status=status, created_by=owner.id)
-    db.add(v); db.flush()
+    db.add(v)
+    db.flush()
     # created_at is server-defaulted to now(); force it into the past when needed
     v.created_at = datetime.now(timezone.utc) - timedelta(hours=created_shift_hours)
     db.add(MediaFile(version_id=v.id, file_type=FileType.video, original_filename="f.mp4",

@@ -5,6 +5,7 @@ import io
 import logging
 import re
 import uuid
+from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -87,7 +88,7 @@ def test_valid_runner_token_authenticates_and_records_use():
     assert actor.token_id == token.id and actor.user is creator
     assert token.last_used_at is not None
     db.commit.assert_called_once()
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         actor.token_id = uuid.uuid4()  # frozen
 
 
@@ -109,15 +110,24 @@ def test_runner_token_failures_share_one_generic_401(case):
     creator = _creator()
     token = _runner_token(creator)
     token_id, secret = token.id, SECRET
-    if case == "revoked": token.revoked_at = datetime.now(timezone.utc)
-    if case == "expired": token.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-    if case == "expires_now": token.expires_at = datetime.now(timezone.utc)
-    if case == "wrong_secret": secret = SECRET + "x"
-    if case == "creator_deactivated": creator.status = UserStatus.deactivated
-    if case == "creator_pending": creator.status = UserStatus.pending_invite
-    if case == "creator_deleted": creator.deleted_at = datetime.now(timezone.utc)
-    if case == "creator_not_superadmin": creator.is_superadmin = False
-    if case == "unknown_id": token_id = uuid.uuid4()
+    if case == "revoked":
+        token.revoked_at = datetime.now(timezone.utc)
+    if case == "expired":
+        token.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if case == "expires_now":
+        token.expires_at = datetime.now(timezone.utc)
+    if case == "wrong_secret":
+        secret = SECRET + "x"
+    if case == "creator_deactivated":
+        creator.status = UserStatus.deactivated
+    if case == "creator_pending":
+        creator.status = UserStatus.pending_invite
+    if case == "creator_deleted":
+        creator.deleted_at = datetime.now(timezone.utc)
+    if case == "creator_not_superadmin":
+        creator.is_superadmin = False
+    if case == "unknown_id":
+        token_id = uuid.uuid4()
     db = _runner_db(token, None if case == "creator_missing" else creator)
     _rejects(_header(token_id, secret=secret), db)
     db.commit.assert_not_called()
@@ -168,13 +178,20 @@ def _traced(case, monkeypatch):
     creator = _creator()
     token = _runner_token(creator, last_used_at=datetime.now(timezone.utc) - timedelta(hours=1))
     token_id, secret = token.id, SECRET
-    if case == "unknown_id": token_id = uuid.uuid4()
-    if case == "wrong_secret": secret = SECRET + "x"
-    if case == "revoked": token.revoked_at = datetime.now(timezone.utc)
-    if case == "expired": token.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
-    if case == "demoted": creator.is_superadmin = False
-    if case == "deactivated": creator.status = UserStatus.deactivated
-    if case == "deleted": creator.deleted_at = datetime.now(timezone.utc)
+    if case == "unknown_id":
+        token_id = uuid.uuid4()
+    if case == "wrong_secret":
+        secret = SECRET + "x"
+    if case == "revoked":
+        token.revoked_at = datetime.now(timezone.utc)
+    if case == "expired":
+        token.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if case == "demoted":
+        creator.is_superadmin = False
+    if case == "deactivated":
+        creator.status = UserStatus.deactivated
+    if case == "deleted":
+        creator.deleted_at = datetime.now(timezone.utc)
     db = _runner_db(token, creator)
     queried = []
     lookup = db.query.side_effect
@@ -243,7 +260,7 @@ def test_old_automation_clip_render_job_routes_are_gone():
 
 
 @pytest.fixture
-def live_runner(queue):
+def live_runner(queue):  # noqa: F811 (queue is the imported fixture)
     """A real, valid runner token for queue.user, authenticated by the real dependency."""
     from apps.api.main import app as application
     application.dependency_overrides.pop(get_clip_runner_actor)
@@ -256,7 +273,7 @@ def live_runner(queue):
 
 
 def test_runner_token_gets_401_on_every_other_kind_of_endpoint(live_runner):
-    queue = live_runner
+    queue = live_runner  # noqa: F811 (queue is the imported fixture)
     row = job(queue)
     listed = queue.client.get("/runner/clip-render-jobs", headers=queue.headers)
     assert listed.status_code == 200 and [item["id"] for item in listed.json()] == [str(row.id)]  # the token is valid
@@ -284,12 +301,16 @@ def test_runner_token_gets_401_on_every_other_kind_of_endpoint(live_runner):
 
 @pytest.mark.parametrize("case", ["revoked", "expired", "not_superadmin", "deactivated"])
 def test_runner_endpoints_return_the_same_401_body_for_a_dead_token(live_runner, case):
-    queue = live_runner
+    queue = live_runner  # noqa: F811 (queue is the imported fixture)
     row = job(queue)
-    if case == "revoked": queue.token.revoked_at = datetime.now(timezone.utc)
-    if case == "expired": queue.token.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
-    if case == "not_superadmin": queue.user.is_superadmin = False
-    if case == "deactivated": queue.user.status = UserStatus.deactivated
+    if case == "revoked":
+        queue.token.revoked_at = datetime.now(timezone.utc)
+    if case == "expired":
+        queue.token.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    if case == "not_superadmin":
+        queue.user.is_superadmin = False
+    if case == "deactivated":
+        queue.user.status = UserStatus.deactivated
     responses = [
         queue.client.get("/runner/clip-render-jobs", headers=queue.headers),
         queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim", headers=queue.headers),

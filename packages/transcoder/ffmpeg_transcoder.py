@@ -109,7 +109,7 @@ class FFmpegTranscoder(BaseTranscoder):
 
     async def generate_waveform(self, s3_key: str) -> dict:
         """Generate waveform data for audio visualization using streaming."""
-        input_url = self._get_presigned_url(s3_key)
+        self._get_presigned_url(s3_key)
         # Simplified waveform: just return peak data (full waveform extraction is complex)
         return {"samples": [], "peak": 1.0, "source": s3_key}
 
@@ -185,7 +185,6 @@ class FFmpegTranscoder(BaseTranscoder):
                     "-force_key_frames", "expr:gte(t,n_forced*2)",
                 ]
 
-            segment_dir = hls_dir / "%v"
             ffmpeg_cmd += [
                 "-f", "hls",
                 "-hls_time", "2",

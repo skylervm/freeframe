@@ -10,16 +10,25 @@ from apps.api.models.asset import Asset, AssetType, AssetVersion, MediaFile, Fil
 
 
 def _seed_media(db):
-    u = User(email=f"orph-{uuid.uuid4()}@t.local", name="t"); db.add(u); db.flush()
-    p = Project(name="t", project_type=ProjectType.personal, created_by=u.id); db.add(p); db.flush()
-    a = Asset(project_id=p.id, name="t", asset_type=AssetType.video, created_by=u.id); db.add(a); db.flush()
-    v = AssetVersion(asset_id=a.id, version_number=1, processing_status=ProcessingStatus.ready, created_by=u.id); db.add(v); db.flush()
+    u = User(email=f"orph-{uuid.uuid4()}@t.local", name="t")
+    db.add(u)
+    db.flush()
+    p = Project(name="t", project_type=ProjectType.personal, created_by=u.id)
+    db.add(p)
+    db.flush()
+    a = Asset(project_id=p.id, name="t", asset_type=AssetType.video, created_by=u.id)
+    db.add(a)
+    db.flush()
+    v = AssetVersion(asset_id=a.id, version_number=1, processing_status=ProcessingStatus.ready, created_by=u.id)
+    db.add(v)
+    db.flush()
     raw = f"raw/{p.id}/{a.id}/{v.id}/original.mp4"
     mf = MediaFile(version_id=v.id, file_type=FileType.video, original_filename="f.mp4", mime_type="video/mp4",
                    file_size_bytes=100, s3_key_raw=raw,
                    s3_key_processed=f"processed/{p.id}/{a.id}/{v.id}",
                    s3_key_thumbnail=f"processed/{p.id}/{a.id}/{v.id}/thumb0.jpg")
-    db.add(mf); db.flush()
+    db.add(mf)
+    db.flush()
     return str(p.id), str(a.id), str(v.id), raw
 
 

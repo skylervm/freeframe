@@ -20,15 +20,19 @@ def _seed(db, status, created_shift_hours, *, upload_id="u-1", activity_shift_ho
     from apps.api.models.asset import Asset, AssetType, AssetVersion, MediaFile, FileType
 
     owner = User(email=f"sw-{uuid.uuid4()}@t.local", name="t")
-    db.add(owner); db.flush()
+    db.add(owner)
+    db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(project); db.flush()
+    db.add(project)
+    db.flush()
     asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video,
                   created_by=owner.id)
-    db.add(asset); db.flush()
+    db.add(asset)
+    db.flush()
     v = AssetVersion(asset_id=asset.id, version_number=1, processing_status=status,
                      created_by=owner.id, upload_id=upload_id)
-    db.add(v); db.flush()
+    db.add(v)
+    db.flush()
     v.created_at = datetime.now(timezone.utc) - timedelta(hours=created_shift_hours)
     if activity_shift_hours is not None:
         v.last_activity_at = datetime.now(timezone.utc) - timedelta(hours=activity_shift_hours)

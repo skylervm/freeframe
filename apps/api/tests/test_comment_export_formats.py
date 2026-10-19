@@ -2,7 +2,7 @@
 from xml.etree import ElementTree as ET
 
 from apps.api.services.comment_export import (
-    Marker, snap_fps, tc_to_frames, to_edl, to_fcpxml,
+    Marker, snap_fps, tc_to_frames, to_edl, to_fcpxml, to_premiere_xml,
 )
 
 SPEC25 = snap_fps(25.0)
@@ -85,9 +85,6 @@ def test_fcpxml_gap_extends_past_last_marker_when_duration_unknown():
     xml = to_fcpxml([_marker(frames=1000)], SPEC25, "D", total_duration_frames=0)
     gap = _fcpxml_root(xml).find(".//gap")
     assert gap.get("duration") == f"{1000 + 1 + 250}/25s"
-
-
-from apps.api.services.comment_export import to_premiere_xml
 
 
 def _xmeml_seq(xml: str):

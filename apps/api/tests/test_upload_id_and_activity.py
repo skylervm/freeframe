@@ -118,15 +118,19 @@ def test_presign_refuses_a_version_the_reaper_already_soft_deleted(real_db, monk
     from fastapi import HTTPException
 
     owner = User(email=f"sd-{uuid.uuid4()}@t.local", name="t")
-    real_db.add(owner); real_db.flush()
+    real_db.add(owner)
+    real_db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    real_db.add(project); real_db.flush()
+    real_db.add(project)
+    real_db.flush()
     asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video, created_by=owner.id)
-    real_db.add(asset); real_db.flush()
+    real_db.add(asset)
+    real_db.flush()
     version = AssetVersion(asset_id=asset.id, version_number=1,
                            processing_status=ProcessingStatus.uploading, created_by=owner.id,
                            upload_id="u-1", deleted_at=datetime.now(timezone.utc))
-    real_db.add(version); real_db.flush()
+    real_db.add(version)
+    real_db.flush()
     key = f"raw/{version.id}/original.mp4"
     real_db.add(MediaFile(version_id=version.id, file_type=FileType.video,
                           original_filename="f.mp4", mime_type="video/mp4",
@@ -175,9 +179,11 @@ def test_both_initiate_paths_record_the_upload_id(real_db, monkeypatch, path):
     import apps.api.routers.assets as assets_module
 
     owner = User(email=f"init-{uuid.uuid4()}@t.local", name="t")
-    real_db.add(owner); real_db.flush()
+    real_db.add(owner)
+    real_db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    real_db.add(project); real_db.flush()
+    real_db.add(project)
+    real_db.flush()
 
     for mod in (upload_module, assets_module):
         monkeypatch.setattr(mod, "create_multipart_upload", lambda k, m: "brand-new-upload",
@@ -195,7 +201,8 @@ def test_both_initiate_paths_record_the_upload_id(real_db, monkeypatch, path):
     else:
         asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video,
                       created_by=owner.id)
-        real_db.add(asset); real_db.flush()
+        real_db.add(asset)
+        real_db.flush()
         monkeypatch.setattr(assets_module, "require_effective_project_role", lambda *a, **k: None,
                             raising=False)
         result = assets_module.initiate_new_version(
@@ -220,14 +227,18 @@ def _seed_version(db, status, created_shift_hours, activity_shift_hours=None):
     from apps.api.models.asset import Asset, AssetType, AssetVersion, MediaFile, FileType
 
     owner = User(email=f"act-{uuid.uuid4()}@t.local", name="t")
-    db.add(owner); db.flush()
+    db.add(owner)
+    db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(project); db.flush()
+    db.add(project)
+    db.flush()
     asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video, created_by=owner.id)
-    db.add(asset); db.flush()
+    db.add(asset)
+    db.flush()
     v = AssetVersion(asset_id=asset.id, version_number=1, processing_status=status,
                      created_by=owner.id)
-    db.add(v); db.flush()
+    db.add(v)
+    db.flush()
     v.created_at = datetime.now(timezone.utc) - timedelta(hours=created_shift_hours)
     if activity_shift_hours is not None:
         v.last_activity_at = datetime.now(timezone.utc) - timedelta(hours=activity_shift_hours)

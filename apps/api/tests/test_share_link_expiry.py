@@ -16,13 +16,15 @@ from apps.api.services.permissions import validate_share_link
 
 def _owner(db):
     u = User(email=f"exp-{uuid.uuid4()}@t.local", name="t")
-    db.add(u); db.flush()
+    db.add(u)
+    db.flush()
     return u
 
 
 def _link(db, owner, project, expires_days_ago=None):
     link = ShareLink(token=f"tok-{uuid.uuid4()}", created_by=owner.id, project_id=project.id)
-    db.add(link); db.flush()
+    db.add(link)
+    db.flush()
     if expires_days_ago is not None:
         link.expires_at = datetime.now(timezone.utc) - timedelta(days=expires_days_ago)
         db.flush()
@@ -33,7 +35,8 @@ def test_expire_share_links_sweeps_only_long_expired(real_db, monkeypatch):
     monkeypatch.setattr(settings, "soft_delete_retention_days", 30)
     owner = _owner(real_db)
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    real_db.add(project); real_db.flush()
+    real_db.add(project)
+    real_db.flush()
 
     long_expired = _link(real_db, owner, project, expires_days_ago=40)   # > 30 → soft-delete
     recently_expired = _link(real_db, owner, project, expires_days_ago=5)  # < 30 → keep editable

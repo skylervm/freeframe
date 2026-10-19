@@ -102,21 +102,24 @@ def test_backfill_skips_row_when_probe_raises_and_continues_batch():
 def _user(db):
     from apps.api.models.user import User
     u = User(email=f"backfill-{uuid.uuid4()}@t.local", name="t")
-    db.add(u); db.flush()
+    db.add(u)
+    db.flush()
     return u
 
 
 def _project(db, owner):
     from apps.api.models.project import Project, ProjectType
     p = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(p); db.flush()
+    db.add(p)
+    db.flush()
     return p
 
 
 def _asset(db, project, owner, asset_type=AssetType.video):
     from apps.api.models.asset import Asset
     a = Asset(project_id=project.id, name="t", asset_type=asset_type, created_by=owner.id)
-    db.add(a); db.flush()
+    db.add(a)
+    db.flush()
     return a
 
 
@@ -124,7 +127,8 @@ def _version(db, asset, owner, status, deleted=False):
     from datetime import datetime, timezone
     from apps.api.models.asset import AssetVersion
     v = AssetVersion(asset_id=asset.id, version_number=1, processing_status=status, created_by=owner.id)
-    db.add(v); db.flush()
+    db.add(v)
+    db.flush()
     if deleted:
         v.deleted_at = datetime.now(timezone.utc)
         db.flush()
@@ -136,7 +140,8 @@ def _media(db, version, duration_seconds=None):
     mf = MediaFile(version_id=version.id, file_type=FileType.video, original_filename="f.mp4",
                    mime_type="video/mp4", file_size_bytes=10, s3_key_raw=f"raw/{version.id}",
                    duration_seconds=duration_seconds)
-    db.add(mf); db.flush()
+    db.add(mf)
+    db.flush()
     return mf
 
 

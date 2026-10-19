@@ -21,7 +21,7 @@ def list_notifications(
 ):
     query = db.query(Notification).filter(Notification.user_id == current_user.id)
     if unread_only:
-        query = query.filter(Notification.read == False)
+        query = query.filter(Notification.read == False)  # noqa: E712 (SQL comparison)
     notifications = query.order_by(Notification.created_at.desc()).limit(50).all()
 
     # Enrich with asset name, actor name, comment preview
@@ -88,6 +88,6 @@ def mark_all_notifications_read(
 ):
     db.query(Notification).filter(
         Notification.user_id == current_user.id,
-        Notification.read == False,
+        Notification.read == False,  # noqa: E712 (SQL comparison)
     ).update({"read": True})
     db.commit()
