@@ -46,7 +46,7 @@ class SetupGuardMiddleware(BaseHTTPMiddleware):
             db = SessionLocal()
             try:
                 has_admin = db.query(User).filter(
-                    User.is_superadmin == True,
+                    User.is_superadmin == True,  # noqa: E712 (SQL comparison)
                     User.deleted_at.is_(None),
                 ).first() is not None
             finally:

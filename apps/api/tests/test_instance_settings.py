@@ -1,5 +1,10 @@
 """Tests for instance_settings model, storage service, router, and cap enforcement."""
+import uuid
+from unittest.mock import MagicMock
+
 from apps.api.models.instance_settings import InstanceSettings
+from apps.api.routers import upload as upload_router
+from apps.api.services import storage as storage_service
 
 
 def test_instance_settings_table_shape():
@@ -9,10 +14,6 @@ def test_instance_settings_table_shape():
     # 0 = unlimited default
     assert cols["storage_limit_bytes"].server_default.arg == "0"
     assert cols["storage_limit_bytes"].nullable is False
-
-
-from unittest.mock import MagicMock
-from apps.api.services import storage as storage_service
 
 
 def test_get_storage_limit_no_row_is_unlimited(mock_db):
@@ -127,10 +128,6 @@ def test_get_settings_no_row_is_read_only_and_unlimited(client, auth_headers, mo
     assert r.json() == {"storage_limit_bytes": 0, "storage_used_bytes": 100}
     mock_db.add.assert_not_called()
     mock_db.commit.assert_not_called()
-
-
-import uuid
-from apps.api.routers import upload as upload_router
 
 
 def test_initiate_upload_rejected_when_over_cap(client, auth_headers, mock_db, test_user, monkeypatch):

@@ -515,10 +515,6 @@ def test_comment_export_excludes_resolved_instructions():
         id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="clip 1: start",
         timecode_start=10, timecode_end=None, resolved=False, visibility="project", created_at=None,
     )
-    resolved_comment = MagicMock(
-        id=uuid.uuid4(), asset_id=asset_id, version_id=version_id, body="CLIP 1: END HERE",
-        timecode_start=20, timecode_end=None, resolved=True, visibility="project", created_at=None,
-    )
     db = MagicMock()
     db.query.return_value = db
     db.filter.return_value = db

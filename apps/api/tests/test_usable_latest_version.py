@@ -19,18 +19,22 @@ def _seed(db, statuses):
     from apps.api.models.asset import Asset, AssetType, AssetVersion, MediaFile, FileType
 
     owner = User(email=f"lv-{uuid.uuid4()}@t.local", name="t")
-    db.add(owner); db.flush()
+    db.add(owner)
+    db.flush()
     project = Project(name="t", project_type=ProjectType.personal, created_by=owner.id)
-    db.add(project); db.flush()
+    db.add(project)
+    db.flush()
     asset = Asset(project_id=project.id, name="t", asset_type=AssetType.video,
                   created_by=owner.id)
-    db.add(asset); db.flush()
+    db.add(asset)
+    db.flush()
 
     versions = []
     for n, status in enumerate(statuses, start=1):
         v = AssetVersion(asset_id=asset.id, version_number=n, processing_status=status,
                          created_by=owner.id)
-        db.add(v); db.flush()
+        db.add(v)
+        db.flush()
         db.add(MediaFile(version_id=v.id, file_type=FileType.video,
                          original_filename="f.mp4", mime_type="video/mp4",
                          file_size_bytes=1, s3_key_raw=f"raw/{v.id}",
