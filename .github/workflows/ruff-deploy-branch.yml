@@ -1,0 +1,36 @@
+name: Ruff (deploy branch)
+
+# ci.yml only runs for PRs into main. The live branch is feature/frameio-keybindings,
+# so this runs just the Ruff check for PRs into it, without the full test and build jobs.
+on:
+  pull_request:
+    branches: [feature/frameio-keybindings]
+    paths:
+      - "**.py"
+      - "ruff.toml"
+      - ".github/workflows/ruff-deploy-branch.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: Ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Lint Python with Ruff
+        run: |
+          pip install ruff==0.16.9
+          ruff check .
