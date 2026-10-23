@@ -18,6 +18,7 @@ import {
   Trash2,
   Globe,
   Lock,
+  Scissors,
   ArrowLeftRight,
   Repeat,
 } from "lucide-react";
@@ -366,9 +367,11 @@ export function CommentInput({
   }
 
   async function handleSubmit(lockAsClip = false) {
+    // Enter in the textarea also lands here, so a pending post must block every path.
+    if (submitting) return;
     const trimmed = body.trim() || (lockAsClip ? "Clip" : "");
     if (!trimmed) return;
-    if (lockAsClip && (!canLockClip || !rangeActive || submitting)) return;
+    if (lockAsClip && (!canLockClip || !rangeActive)) return;
 
     setSubmitting(true);
     setError(null);
@@ -775,7 +778,7 @@ export function CommentInput({
                   title="Lock as clip"
                   className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-accent text-accent hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
-                  <Lock className="h-3.5 w-3.5" />
+                  <Scissors className="h-3.5 w-3.5" />
                 </button>
               )}
               <button

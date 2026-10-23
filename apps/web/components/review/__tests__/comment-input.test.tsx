@@ -376,10 +376,13 @@ describe('CommentInput lock as clip', () => {
     let finishSubmit: () => void = () => {}
     const onSubmit = renderClipInput(vi.fn().mockReturnValue(new Promise<void>((resolve) => { finishSubmit = resolve })))
     fireEvent.click(screen.getByTitle('Select a range'))
+    const textarea = screen.getByPlaceholderText('Leave your comment...')
+    fireEvent.change(textarea, { target: { value: 'the drop' } })
     fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
     expect(screen.getByRole('button', { name: 'Lock as clip' })).toBeDisabled()
     expect(screen.getByTitle('Send (Enter)')).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+    fireEvent.keyDown(textarea, { key: 'Enter' })
     act(() => { useReviewStore.getState().setPendingRange({ start: 500, end: 520 }) })
     await act(async () => { finishSubmit() })
 
