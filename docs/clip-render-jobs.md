@@ -6,11 +6,15 @@ Unlocked ranges are skipped. The button queues work; it does not render on the
 server or upload any clips. A separate Mac runner must be on and connected to
 pull the job. Until then the job stays queued and can be cancelled.
 
-The queue snapshots unresolved, top-level, non-deleted `Clip N` range comments
-for the selected ready video version. Only locked ranges are included, with
-clip numbers from 1 through 999. Later comment edits do not change that snapshot.
-Every locked range must have finite timecodes, a nonnegative start, and an end
-after its start. An invalid range returns a conflict naming the clip number.
+The queue snapshots unresolved, top-level, non-deleted range comments for the
+selected ready video version. The comment text does not matter. Only locked
+ranges are included, numbered 1 upward by start time (then end, then comment
+id). Later comment edits do not change that snapshot. Every locked range must
+have finite timecodes, a nonnegative start, and an end after its start. An
+invalid range returns a conflict that names the comment. At most 999 ranges can
+be locked for one render (`too_many_ranges`). The automation clip-marker list
+(`GET .../comments` under the project token) still lists only `Clip N` comments;
+this rule applies to rendering.
 An active job prevents duplicates. The newest successful job also prevents
 rendering an identical locked snapshot again. Failed or cancelled jobs can be
 retried. Changing which ranges are locked, or editing a range and relocking it,
@@ -32,8 +36,7 @@ generation stays disabled until a range is locked again.
 
 Creation conflicts return HTTP 409 with a structured `detail` containing `code`
 and `message`. Codes are `version_not_ready`, `no_locked_ranges`, `invalid_range`,
-`duplicate_clip_number` (two locked ranges share a clip number), `job_active`, and
-`already_rendered`.
+`job_active`, and `already_rendered`.
 
 The Mac last-seen time is the newest `last_used_at` of a clip runner token
 that is not revoked, not expired, and whose creator is an active superadmin

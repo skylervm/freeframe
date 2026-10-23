@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -184,7 +185,7 @@ def test_owner_and_editor_can_queue_only_the_locked_snapshot(queue, role):
     response = queue.create()
     assert response.status_code == 201
     ranges = [{"comment_id": str(c.id), "number": n, "start": c.timecode_start, "end": c.timecode_end}
-              for n, c in [(1, queue.comments[0]), (3, queue.comments[2])]]
+              for n, c in [(1, queue.comments[0]), (2, queue.comments[2])]]
     assert response.json()["ranges"] == ranges
     assert response.json()["status"] == "queued"
     assert response.json()["ranges_hash"] == hashlib.sha256(
@@ -253,7 +254,8 @@ def test_invalid_locked_ranges_are_conflicts_before_hashing(queue, start, end):
     response = queue.create()
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "invalid_range"
-    assert "Clip 1" in response.json()["detail"]["message"]
+    assert "must have finite timecodes" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["comment_id"] == str(queue.comments[0].id)
     assert queue.jobs == []
     queue.db.commit.assert_not_called()
 
@@ -267,24 +269,55 @@ def test_worker_range_schema_rejects_invalid_timecodes(start, end):
         ClipRenderRange(comment_id=uuid.uuid4(), number=1, start=start, end=end)
 
 
-def test_two_locked_ranges_with_the_same_clip_number_are_a_conflict(queue):
-    locked = [comment for comment in queue.comments if comment.locked_at is not None]
-    assert len(locked) >= 2
-    locked[1].body = locked[0].body
-    response = queue.create()
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "duplicate_clip_number"
-    assert locked[0].body in response.json()["detail"]["message"]
-    assert queue.jobs == []
-    queue.db.commit.assert_not_called()
-
-
-def test_a_duplicate_clip_number_on_an_unlocked_range_is_skipped(queue):
-    unlocked = [comment for comment in queue.comments if comment.locked_at is None]
-    locked = [comment for comment in queue.comments if comment.locked_at is not None]
-    assert unlocked and locked
-    unlocked[0].body = locked[0].body
+def test_any_text_counts_and_clips_are_numbered_by_start_time(queue):
+    queue.data[Comment].clear()
+    late = queue.comment(9, body="hook", timecode_start=50.0, timecode_end=55.0)
+    early = queue.comment(9, body="2", timecode_start=10.0, timecode_end=15.0)
+    middle = queue.comment(9, body="Clip 7", timecode_start=30.0, timecode_end=35.0)
+    unlocked = queue.comment(9, body="maybe", timecode_start=40.0, timecode_end=45.0, locked_at=None)
     assert queue.create().status_code == 201
+    assert [(item["comment_id"], item["number"]) for item in queue.jobs[0].ranges] == [
+        (str(early.id), 1), (str(middle.id), 2), (str(late.id), 3)]
+    latest = queue.latest().json()
+    assert (latest["locked_count"], latest["range_count"]) == (3, 4)
+    assert str(unlocked.id) not in [item["comment_id"] for item in queue.jobs[0].ranges]
+
+
+def test_locked_ranges_with_the_same_text_are_not_a_conflict(queue):
+    queue.data[Comment].clear()
+    first = queue.comment(9, body="clip", timecode_start=20.0, timecode_end=25.0)
+    second = queue.comment(9, body="clip", timecode_start=5.0, timecode_end=8.0)
+    assert queue.create().status_code == 201
+    assert [(item["comment_id"], item["number"]) for item in queue.jobs[0].ranges] == [
+        (str(second.id), 1), (str(first.id), 2)]
+
+
+def test_more_locked_ranges_than_the_runner_can_number_are_a_conflict(queue):
+    many = [SimpleNamespace(id=uuid.uuid4(), locked_at=NOW, timecode_start=float(n), timecode_end=float(n) + 1)
+            for n in range(1000)]
+    assert len(locked_snapshot(many[:999])[0]) == 999
+    with pytest.raises(HTTPException) as caught:
+        locked_snapshot(many)
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "too_many_ranges"
+
+
+def test_a_new_earlier_range_renumbers_the_clips_and_allows_another_render(queue):
+    job(queue, status="done")
+    earlier = queue.comment(9, timecode_start=1.0, timecode_end=2.0)
+    assert queue.create().status_code == 201
+    numbers = {item["comment_id"]: item["number"] for item in queue.jobs[-1].ranges}
+    assert numbers[str(earlier.id)] == 1
+    assert numbers[str(queue.comments[0].id)] == 2
+
+
+def test_ranges_that_start_together_get_a_stable_order(queue):
+    queue.data[Comment].clear()
+    longer = queue.comment(9, timecode_start=10.0, timecode_end=20.0)
+    shorter = queue.comment(9, timecode_start=10.0, timecode_end=14.0)
+    ranges, digest = locked_snapshot([longer, shorter])
+    assert [item["comment_id"] for item in ranges] == [str(shorter.id), str(longer.id)]
+    assert locked_snapshot([shorter, longer]) == (ranges, digest)
 
 
 def test_valid_ranges_can_start_at_zero_and_invalid_unlocked_ranges_are_skipped(queue):
@@ -298,9 +331,7 @@ def test_valid_ranges_can_start_at_zero_and_invalid_unlocked_ranges_are_skipped(
 
 @pytest.mark.parametrize("excluded", [dict(resolved=True), dict(deleted_at=NOW), dict(parent_id=uuid.uuid4()),
                                       dict(asset_id=uuid.uuid4()), dict(version_id=uuid.uuid4()),
-                                      dict(timecode_start=None), dict(timecode_end=None), dict(body="ordinary note"),
-                                      dict(body="Clip 0"), dict(body="Clip 1000"),
-                                      pytest.param(dict(body="Clip " + "9" * 5000), id="oversized_number")])
+                                      dict(timecode_start=None), dict(timecode_end=None)])
 def test_snapshot_and_counts_exclude_nonmatching_comments(queue, excluded):
     queue.comment(4, **excluded)
     assert queue.create().status_code == 201
