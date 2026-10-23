@@ -6,6 +6,12 @@ Unlocked ranges are skipped. The button queues work; it does not render on the
 server or upload any clips. A separate Mac runner must be on and connected to
 pull the job. Until then the job stays queued and can be cancelled.
 
+To create a locked range without typing, select a range in the video comment box,
+drag its edges, then press **Lock as clip**. Anyone with comment access in the
+project review screen can lock their own range. This saves a range comment labelled
+"Clip" (or the text you typed) and locks it in the same request. If saving fails, the draft remains for
+retry. **Send** continues to post a typed comment without locking it.
+
 The queue snapshots unresolved, top-level, non-deleted range comments for the
 selected ready video version. The comment text does not matter. Only locked
 ranges are included, numbered 1 upward by start time (then end, then comment

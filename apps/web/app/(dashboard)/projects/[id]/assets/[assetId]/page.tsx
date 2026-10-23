@@ -264,15 +264,17 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
     parentId?: string,
     visibility?: string,
     mentionUserIds?: string[],
+    locked?: boolean,
   ) => {
     await createComment(
       body,
       timecodeStart,
       timecodeEnd,
-      annotation || annotationData || undefined,
+      locked ? undefined : annotation || annotationData || undefined,
       parentId,
       visibility,
       mentionUserIds,
+      locked,
     )
     setAnnotationData(null)
     refetchComments()
@@ -775,6 +777,7 @@ function ReviewScreenInner({ projectId }: { projectId: string }) {
                       projectId={asset.project_id}
                       assetType={asset.asset_type}
                       onSubmit={handleSubmitComment}
+                      canLockClip={canComment}
                       annotationData={annotationData}
                     />
                   )}

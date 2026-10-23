@@ -34,6 +34,7 @@ interface CreateCommentPayload {
   }
   parent_id?: string
   visibility?: string
+  locked?: boolean
 }
 
 function buildSWRKey(assetId: string | null, versionId: string | null): string | null {
@@ -85,6 +86,7 @@ export function useComments(assetId: string | null, versionId: string | null) {
     parentId?: string,
     visibility?: string,
     mentionUserIds?: string[],
+    locked?: boolean,
   ): Promise<CommentWithReplies> {
     if (!assetId) throw new Error('No asset selected')
     if (!versionId) throw new Error('No version selected')
@@ -95,6 +97,7 @@ export function useComments(assetId: string | null, versionId: string | null) {
     if (annotationData) payload.annotation = { drawing_data: annotationData }
     if (parentId) payload.parent_id = parentId
     if (visibility) payload.visibility = visibility
+    if (locked !== undefined) payload.locked = locked
     if (mentionUserIds?.length) (payload as any).mention_user_ids = mentionUserIds
 
     const endpoint = parentId

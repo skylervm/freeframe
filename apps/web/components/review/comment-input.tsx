@@ -18,6 +18,7 @@ import {
   Trash2,
   Globe,
   Lock,
+  Scissors,
   ArrowLeftRight,
   Repeat,
 } from "lucide-react";
@@ -46,7 +47,9 @@ interface CommentInputProps {
     parentId?: string,
     visibility?: string,
     mentionUserIds?: string[],
+    locked?: boolean,
   ) => Promise<void>;
+  canLockClip?: boolean;
   onCancelReply?: () => void;
   onPauseVideo?: () => void;
   /** Compare mode: pane-local playhead seconds; replaces the global store playheadTime. */
@@ -198,6 +201,7 @@ export function CommentInput({
   replyToId,
   annotationData,
   onSubmit,
+  canLockClip = false,
   onCancelReply,
   onPauseVideo,
   playheadTimeOverride,
@@ -362,9 +366,12 @@ export function CommentInput({
     }
   }
 
-  async function handleSubmit() {
-    const trimmed = body.trim();
+  async function handleSubmit(lockAsClip = false) {
+    // Enter in the textarea also lands here, so a pending post must block every path.
+    if (submitting) return;
+    const trimmed = body.trim() || (lockAsClip ? "Clip" : "");
     if (!trimmed) return;
+    if (lockAsClip && (!canLockClip || !rangeActive)) return;
 
     setSubmitting(true);
     setError(null);
@@ -376,7 +383,7 @@ export function CommentInput({
       // hold the other pane's in-progress drawing) — no cross-pane leak.
       let finalAnnotation: Record<string, unknown> | undefined = undefined;
 
-      if (captureAnnotation) {
+      if (captureAnnotation && !lockAsClip) {
         if (drawingActive) {
           try {
             const json = getJSON();
@@ -436,6 +443,7 @@ export function CommentInput({
         replyToId ?? undefined,
         commentVisibility,
         mentionUserIds.length > 0 ? mentionUserIds : undefined,
+        lockAsClip || undefined,
       );
 
       setBody("");
@@ -463,7 +471,9 @@ export function CommentInput({
       }
       if (replyToId && onCancelReply) onCancelReply();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to post comment");
+      setError(lockAsClip
+        ? "Couldn't create the locked clip. Please try again."
+        : err instanceof Error ? err.message : "Failed to post comment");
     } finally {
       setSubmitting(false);
     }
@@ -760,8 +770,19 @@ export function CommentInput({
               </div>
 
               {/* Submit */}
+              {rangeActive && canLockClip && (
+                <button
+                  onClick={() => handleSubmit(true)}
+                  disabled={submitting}
+                  aria-label="Lock as clip"
+                  title="Lock as clip"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-accent text-accent hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  <Scissors className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button
-                onClick={handleSubmit}
+                onClick={() => handleSubmit()}
                 disabled={!body.trim() || submitting}
                 className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-accent text-text-primary hover:bg-accent/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 title="Send (Enter)"

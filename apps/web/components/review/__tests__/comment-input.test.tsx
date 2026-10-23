@@ -290,6 +290,120 @@ describe('CommentInput range', () => {
   })
 })
 
+describe('CommentInput lock as clip', () => {
+  function renderClipInput(onSubmit = vi.fn().mockResolvedValue(undefined), extra = {}) {
+    useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
+    render(<CommentInput assetId="a1" projectId="p1" assetType="video" onSubmit={onSubmit} canLockClip {...extra} />)
+    return onSubmit
+  }
+
+  it('offers the button only for a drafted range with lock permission', () => {
+    renderClipInput()
+    expect(screen.queryByRole('button', { name: 'Lock as clip' })).toBeNull()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    expect(screen.getByRole('button', { name: 'Lock as clip' })).toBeEnabled()
+    fireEvent.click(screen.getByTitle('Remove range'))
+    expect(screen.queryByRole('button', { name: 'Lock as clip' })).toBeNull()
+  })
+
+  it('does not offer the button without permission, even with a range', () => {
+    renderClipInput(undefined, { canLockClip: false })
+    fireEvent.click(screen.getByTitle('Select a range'))
+    expect(screen.queryByRole('button', { name: 'Lock as clip' })).toBeNull()
+  })
+
+  it.each([
+    { assetType: 'audio' },
+    { replyToId: 'c1' },
+    { playheadTimeOverride: 5 },
+  ])('does not offer the button in other input contexts: %j', (extra) => {
+    useReviewStore.getState().setPendingRange({ start: 1, end: 5 })
+    renderClipInput(undefined, extra)
+    expect(screen.queryByRole('button', { name: 'Lock as clip' })).toBeNull()
+  })
+
+  it('creates and locks the dragged range once with no typed text', async () => {
+    const onSubmit = renderClipInput()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    act(() => { useReviewStore.getState().setPendingRange({ start: 322.5, end: 340.25 }) })
+    expect(screen.getByTitle('Send (Enter)')).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+
+    await waitFor(() => expect(useReviewStore.getState().pendingRange).toBeNull())
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Clip', 322.5, 340.25, undefined, undefined, 'public', undefined, true)
+    expect(screen.getByPlaceholderText('Leave your comment...')).toHaveValue('')
+  })
+
+  it('keeps typed text as the clip label instead of replacing it', async () => {
+    const onSubmit = renderClipInput()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    act(() => { useReviewStore.getState().setPendingRange({ start: 10, end: 20 }) })
+    fireEvent.change(screen.getByPlaceholderText('Leave your comment...'), { target: { value: 'the drop' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+
+    await waitFor(() => expect(useReviewStore.getState().pendingRange).toBeNull())
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('the drop', 10, 20, undefined, undefined, 'public', undefined, true)
+  })
+
+  it('creates a clean range even when a pending drawing exists', async () => {
+    const onSubmit = renderClipInput(undefined, { annotationData: { objects: [{ type: 'path' }] } })
+    fireEvent.click(screen.getByTitle('Select a range'))
+    act(() => {
+      useReviewStore.setState({ pendingAnnotation: { objects: [{ type: 'path' }] } })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+
+    await waitFor(() => expect(useReviewStore.getState().pendingRange).toBeNull())
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Clip', 320, 325, undefined, undefined, 'public', undefined, true)
+    expect(useReviewStore.getState().pendingAnnotation).toBeNull()
+  })
+
+  it('keeps the draft and shows a clear error when atomic creation fails', async () => {
+    const onSubmit = renderClipInput(vi.fn().mockRejectedValue(new Error('Lock rejected')))
+    fireEvent.click(screen.getByTitle('Select a range'))
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+
+    expect(await screen.findByText("Couldn't create the locked clip. Please try again.")).toBeInTheDocument()
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 320, end: 325 })
+    expect(screen.getByRole('button', { name: 'Lock as clip' })).toBeEnabled()
+  })
+
+  it('disables both buttons while posting and preserves a newer draft', async () => {
+    let finishSubmit: () => void = () => {}
+    const onSubmit = renderClipInput(vi.fn().mockReturnValue(new Promise<void>((resolve) => { finishSubmit = resolve })))
+    fireEvent.click(screen.getByTitle('Select a range'))
+    const textarea = screen.getByPlaceholderText('Leave your comment...')
+    fireEvent.change(textarea, { target: { value: 'the drop' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+    expect(screen.getByRole('button', { name: 'Lock as clip' })).toBeDisabled()
+    expect(screen.getByTitle('Send (Enter)')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Lock as clip' }))
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    act(() => { useReviewStore.getState().setPendingRange({ start: 500, end: 520 }) })
+    await act(async () => { finishSubmit() })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(useReviewStore.getState().pendingRange).toEqual({ start: 500, end: 520 })
+  })
+
+  it('keeps normal Send unlocked and still requires text', async () => {
+    const onSubmit = renderClipInput()
+    fireEvent.keyDown(screen.getByPlaceholderText('Leave your comment...'), { key: 'Enter' })
+    expect(onSubmit).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByTitle('Select a range'))
+    expect(screen.getByTitle('Send (Enter)')).toBeDisabled()
+    fireEvent.change(screen.getByPlaceholderText('Leave your comment...'), { target: { value: 'Typed note' } })
+    fireEvent.click(screen.getByTitle('Send (Enter)'))
+
+    await waitFor(() => expect(useReviewStore.getState().pendingRange).toBeNull())
+    expect(onSubmit).toHaveBeenCalledExactlyOnceWith('Typed note', 320, 325, undefined, undefined, 'public', undefined, undefined)
+  })
+})
+
 describe('CommentInput range: slow submissions', () => {
   it('a submit that finishes late does not clear a range drafted in the meantime', async () => {
     useReviewStore.setState({ mediaDuration: 3000, playheadTime: 320 })
