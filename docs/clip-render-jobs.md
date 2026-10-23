@@ -44,7 +44,7 @@ It is not proof that a Mac is currently online.
 ## Clip runner token
 
 The Mac runner uses one instance-wide clip runner token. It works for every
-project, but it can do nothing except list, claim and finish clip render jobs.
+project, but it can do nothing except list, claim, report progress on and finish clip render jobs.
 Every other endpoint returns HTTP 401 for it, including the comment, asset,
 project, upload, user, token and delete endpoints.
 
@@ -100,6 +100,19 @@ returns the same HTTP 404 as a missing job and is absent from the list.
   work or reclaims an expired lease. Each successful claim returns a fresh
   `claim_id` UUID and the version's `processing_status` (for example
   `ready`). Competing claims return HTTP 409.
+- `POST /runner/clip-render-jobs/{job_id}/progress`, body
+  `{"claim_id": "<uuid>", "clips_rendered": 3}`: the runner calls this after each
+  finished clip so the review screen can show a progress bar. Only a claimed job
+  with the matching current `claim_id` accepts it; anything else returns HTTP
+  409. The count is an integer from 0 through 999 and may not exceed the
+  snapshot's range count (HTTP 422, code `invalid_clip_count`). Counts only go
+  up: a lower or equal count is accepted and changes nothing, so a retry is
+  harmless. A new claim resets the count, so a re-claimed job never shows the
+  old attempt's progress. A progress 409 means the claim was lost (the job
+  finished, was cancelled or was re-claimed): the runner should stop reporting
+  progress for that job, never treat it as a render failure. The browser reads
+  the count from the latest-job response (`clips_rendered`, with `ranges` giving
+  the total) and shows the bar while the job is claimed.
 - `POST /runner/clip-render-jobs/{job_id}/finish`, body
   `{"claim_id": "<uuid>", "status": "done", "clips_rendered": 2, "message": ""}`:
   only claimed jobs with the matching current `claim_id` can finish. A stale
@@ -119,8 +132,8 @@ The list and claim responses contain only `id`, `asset_id`, `version_id`,
 to the claim response.
 The claim ID never appears in browser responses. Each range contains
 `comment_id`, `number`, `start`, and `end` in seconds, with the same finite,
-nonnegative, ordered timecode constraints as creation. The finish response
-contains only `id` and `clips_rendered`. No project id, names, comment text,
+nonnegative, ordered timecode constraints as creation. The progress and finish responses
+contain only `id` and `clips_rendered`. No project id, names, comment text,
 user details, media paths, filenames, or URLs are included in these responses. Retention cleanup cascades job deletion when its project,
 asset, version, or requesting user is purged.
 

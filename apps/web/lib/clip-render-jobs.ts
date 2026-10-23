@@ -5,6 +5,7 @@ export interface ClipRenderJob {
   asset_id: string
   version_id: string
   status: 'queued' | 'claimed' | 'done' | 'failed' | 'cancelled'
+  ranges: { number: number }[]
   clips_rendered: number | null
   message: string | null
 }

@@ -15,7 +15,7 @@ from ..models.clip_runner_token import ClipRunnerToken
 from ..models.comment import Comment
 from ..models.project import Project, ProjectRole
 from ..models.user import User, UserStatus
-from ..schemas.clip_render_job import ClipRenderJobFinish
+from ..schemas.clip_render_job import ClipRenderJobFinish, ClipRenderJobProgress
 from .permissions import get_effective_project_role
 
 
@@ -156,7 +156,8 @@ def claim_runner_job(db: Session, job_id: uuid.UUID, user: User) -> dict:
         ClipRenderJob.id == job_id,
         ClipRenderJob.project_id == job.project_id,
         claimable_jobs(now),
-    ).update({"status": "claimed", "claimed_at": now, "claim_id": uuid.uuid4()}, synchronize_session=False)
+    ).update({"status": "claimed", "claimed_at": now, "claim_id": uuid.uuid4(), "clips_rendered": None},
+             synchronize_session=False)
     if changed != 1:
         raise HTTPException(status_code=409, detail="Job is already claimed or finished")
     db.commit()
@@ -166,6 +167,34 @@ def claim_runner_job(db: Session, job_id: uuid.UUID, user: User) -> dict:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"id": job.id, "asset_id": job.asset_id, "version_id": job.version_id, "ranges": job.ranges,
             "created_at": job.created_at, "claim_id": job.claim_id, "processing_status": version.processing_status}
+
+
+def report_runner_progress(db: Session, job_id: uuid.UUID, body: ClipRenderJobProgress, user: User) -> ClipRenderJob:
+    job = _runner_job(db, job_id, user)
+    if job.status != "claimed" or job.claim_id != body.claim_id:
+        raise HTTPException(status_code=409, detail="Only a claimed job can report progress")
+    count = len(job.ranges)
+    if body.clips_rendered > count:
+        raise HTTPException(status_code=422, detail={"code": "invalid_clip_count", "message": f"Clip count cannot exceed {count}"})
+    # Counts only go up, so a retried or out-of-order report cannot move the bar backwards.
+    _live_jobs(db).filter(
+        ClipRenderJob.id == job_id,
+        ClipRenderJob.project_id == job.project_id,
+        ClipRenderJob.status == "claimed",
+        ClipRenderJob.claim_id == body.claim_id,
+        or_(ClipRenderJob.clips_rendered.is_(None), ClipRenderJob.clips_rendered < body.clips_rendered),
+    ).update({"clips_rendered": body.clips_rendered}, synchronize_session=False)
+    db.commit()
+    # An unchanged count is fine. A job that finished, was re-claimed or lost its media
+    # meanwhile is not, and refresh() would not notice the deleted media.
+    current = _live_jobs(db).filter(
+        ClipRenderJob.id == job_id,
+        ClipRenderJob.status == "claimed",
+        ClipRenderJob.claim_id == body.claim_id,
+    ).first()
+    if current is None or current.clips_rendered is None:
+        raise HTTPException(status_code=409, detail="Only a claimed job can report progress")
+    return current
 
 
 def finish_runner_job(db: Session, job_id: uuid.UUID, body: ClipRenderJobFinish, user: User) -> ClipRenderJob:

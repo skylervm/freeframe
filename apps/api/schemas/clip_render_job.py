@@ -71,6 +71,11 @@ class ClipRenderJobFinish(BaseModel):
         return value[:300]
 
 
+class ClipRenderJobProgress(BaseModel):
+    claim_id: uuid.UUID
+    clips_rendered: int = Field(ge=0, le=999, strict=True)
+
+
 class WorkerClipRenderResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

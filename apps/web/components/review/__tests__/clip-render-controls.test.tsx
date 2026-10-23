@@ -13,7 +13,9 @@ function state(status?: ClipRenderJob['status'], overrides: Partial<ClipRenderSt
     generate: vi.fn(async () => {}),
     cancel: vi.fn(async () => {}),
     data: {
-      job: status ? { id: 'job', asset_id: 'asset', version_id: 'version', status, clips_rendered: 2, message: 'Render stopped.' } : null,
+      job: status
+        ? { id: 'job', asset_id: 'asset', version_id: 'version', status, ranges: [{ number: 1 }, { number: 3 }], clips_rendered: 2, message: 'Render stopped.' }
+        : null,
       locked_count: 2,
       range_count: 3,
       worker_last_seen_at: new Date(Date.now() - 120_000).toISOString(),
@@ -95,6 +97,61 @@ describe('clip render controls', () => {
     render(<ClipRenderControls state={state('claimed')} />)
     expect(screen.getByText('Rendering on your Mac')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  function renderingState(clipsRendered: number | null, total = 12) {
+    const value = state('claimed')
+    value.data!.job!.ranges = Array.from({ length: total }, (_, index) => ({ number: index + 1 }))
+    value.data!.job!.clips_rendered = clipsRendered
+    return value
+  }
+
+  it.each([[5, '5 of 12 clips done'], [11, '11 of 12 clips done']])('shows a progress bar at %i of 12 while rendering', (done, text) => {
+    render(<ClipRenderControls state={renderingState(done)} />)
+    const bar = screen.getByRole('progressbar', { name: 'Clip render progress' })
+    expect(bar.getAttribute('aria-valuemin')).toBe('0')
+    expect(bar.getAttribute('aria-valuemax')).toBe('12')
+    expect(bar.getAttribute('aria-valuenow')).toBe(String(done))
+    expect((bar.firstElementChild as HTMLElement).style.width).toBe(`${(done / 12) * 100}%`)
+    expect(bar.getAttribute('aria-valuetext')).toBe(text)
+    expect(screen.getByText(text)).toBeTruthy()
+    expect(screen.getByText('Rendering on your Mac')).toBeTruthy()
+  })
+
+  it.each([null, 0])('says the render is starting with an empty bar when %s clips are done', (done) => {
+    render(<ClipRenderControls state={renderingState(done)} />)
+    const bar = screen.getByRole('progressbar')
+    expect(bar.getAttribute('aria-valuenow')).toBe('0')
+    expect((bar.firstElementChild as HTMLElement).style.width).toBe('0%')
+    expect(screen.getByText('Starting render')).toBeTruthy()
+  })
+
+  it('never fills past full if the server reports more clips than the job has', () => {
+    render(<ClipRenderControls state={renderingState(14, 12)} />)
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('12')
+    expect(screen.getByText('12 of 12 clips done')).toBeTruthy()
+  })
+
+  it('shows no bar when the job has no clips to count', () => {
+    render(<ClipRenderControls state={renderingState(null, 0)} />)
+    expect(screen.getByText('Rendering on your Mac')).toBeTruthy()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it.each(['queued', 'done', 'failed', 'cancelled'] as const)('shows no progress bar for a %s job', (status) => {
+    render(<ClipRenderControls state={state(status)} />)
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('shows the progress bar inside the phone menu too', () => {
+    render(
+      <DropdownMenu.Root defaultOpen>
+        <DropdownMenu.Trigger>More</DropdownMenu.Trigger>
+        <DropdownMenu.Content><ClipRenderControls state={renderingState(3)} menu /></DropdownMenu.Content>
+      </DropdownMenu.Root>,
+    )
+    expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('3')
+    expect(screen.getByText('3 of 12 clips done')).toBeTruthy()
   })
 
   it('shows the completed clip count', () => {
