@@ -771,10 +771,11 @@ export function CommentInput({
                 <button
                   onClick={() => handleSubmit(true)}
                   disabled={submitting}
-                  className="inline-flex h-7 items-center justify-center gap-1 rounded-full bg-accent px-2 text-xs text-text-primary hover:bg-accent/90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Lock as clip"
+                  title="Lock as clip"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-accent text-accent hover:bg-accent/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
                 >
                   <Lock className="h-3.5 w-3.5" />
-                  Lock as clip
                 </button>
               )}
               <button
