@@ -790,6 +790,32 @@ def test_progress_conditional_update_cannot_touch_a_job_that_finished_after_look
     assert row.clips_rendered is None
 
 
+@pytest.mark.parametrize("change", ["asset_deleted", "version_deleted", "project_deleted", "job_deleted"])
+def test_progress_after_the_media_is_deleted_mid_request_is_a_409_not_a_server_error(queue, change):
+    row = job(queue, status="claimed")
+    query = queue.db.query.side_effect
+    count = 0
+
+    def concurrent_delete(model):
+        nonlocal count
+        if model is ClipRenderJob:
+            count += 1
+            if count == 2:
+                if change == "asset_deleted":
+                    queue.asset.deleted_at = NOW
+                if change == "version_deleted":
+                    queue.version.deleted_at = NOW
+                if change == "project_deleted":
+                    queue.project.deleted_at = NOW
+                if change == "job_deleted":
+                    row.deleted_at = NOW
+        return query(model)
+
+    queue.db.query.side_effect = concurrent_delete
+    assert progress(queue, row, 1).status_code == 409
+    assert row.clips_rendered is None
+
+
 def test_latest_job_exposes_progress_and_clip_total_to_the_browser(queue):
     row = job(queue, status="claimed")
     assert progress(queue, row, 1).status_code == 200

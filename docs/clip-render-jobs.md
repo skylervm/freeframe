@@ -108,9 +108,11 @@ returns the same HTTP 404 as a missing job and is absent from the list.
   snapshot's range count (HTTP 422, code `invalid_clip_count`). Counts only go
   up: a lower or equal count is accepted and changes nothing, so a retry is
   harmless. A new claim resets the count, so a re-claimed job never shows the
-  old attempt's progress. The browser reads the count from the latest-job
-  response (`clips_rendered`, with `ranges` giving the total) and shows the bar
-  while the job is claimed.
+  old attempt's progress. A progress 409 means the claim was lost (the job
+  finished, was cancelled or was re-claimed): the runner should stop reporting
+  progress for that job, never treat it as a render failure. The browser reads
+  the count from the latest-job response (`clips_rendered`, with `ranges` giving
+  the total) and shows the bar while the job is claimed.
 - `POST /runner/clip-render-jobs/{job_id}/finish`, body
   `{"claim_id": "<uuid>", "status": "done", "clips_rendered": 2, "message": ""}`:
   only claimed jobs with the matching current `claim_id` can finish. A stale

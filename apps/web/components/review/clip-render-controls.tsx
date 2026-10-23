@@ -26,6 +26,7 @@ export function ClipRenderControls({ state, menu = false }: { state: ClipRenderS
   const claimed = job?.status === 'claimed'
   const total = job?.ranges.length ?? 0
   const done = Math.min(job?.clips_rendered ?? 0, total)
+  const progressText = done === 0 ? 'Starting render' : `${done} of ${total} clips done`
   const inset = menu ? 'px-2.5' : ''
   const note = locked === 0
     ? 'Lock a range to generate clips'
@@ -61,11 +62,12 @@ export function ClipRenderControls({ state, menu = false }: { state: ClipRenderS
               aria-valuemin={0}
               aria-valuemax={total}
               aria-valuenow={done}
+              aria-valuetext={progressText}
               className="my-1 h-1.5 w-full overflow-hidden rounded-full bg-bg-tertiary"
             >
               <div className="h-full rounded-full bg-accent transition-[width] duration-500" style={{ width: `${(done / total) * 100}%` }} />
             </div>
-            <p className="text-text-tertiary">{done === 0 ? 'Starting render' : `${done} of ${total} clips done`}</p>
+            <p className="text-text-tertiary">{progressText}</p>
           </>}
         </>}
         {job?.status === 'done' && <p>Done: {job.clips_rendered ?? 0} clips</p>}

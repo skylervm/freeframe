@@ -185,11 +185,16 @@ def report_runner_progress(db: Session, job_id: uuid.UUID, body: ClipRenderJobPr
         or_(ClipRenderJob.clips_rendered.is_(None), ClipRenderJob.clips_rendered < body.clips_rendered),
     ).update({"clips_rendered": body.clips_rendered}, synchronize_session=False)
     db.commit()
-    db.refresh(job)
-    # An unchanged count is fine; a job that finished or was re-claimed meanwhile is not.
-    if job.status != "claimed" or job.claim_id != body.claim_id:
+    # An unchanged count is fine. A job that finished, was re-claimed or lost its media
+    # meanwhile is not, and refresh() would not notice the deleted media.
+    current = _live_jobs(db).filter(
+        ClipRenderJob.id == job_id,
+        ClipRenderJob.status == "claimed",
+        ClipRenderJob.claim_id == body.claim_id,
+    ).first()
+    if current is None or current.clips_rendered is None:
         raise HTTPException(status_code=409, detail="Only a claimed job can report progress")
-    return job
+    return current
 
 
 def finish_runner_job(db: Session, job_id: uuid.UUID, body: ClipRenderJobFinish, user: User) -> ClipRenderJob:

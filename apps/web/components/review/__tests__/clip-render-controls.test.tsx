@@ -113,6 +113,7 @@ describe('clip render controls', () => {
     expect(bar.getAttribute('aria-valuemax')).toBe('12')
     expect(bar.getAttribute('aria-valuenow')).toBe(String(done))
     expect((bar.firstElementChild as HTMLElement).style.width).toBe(`${(done / 12) * 100}%`)
+    expect(bar.getAttribute('aria-valuetext')).toBe(text)
     expect(screen.getByText(text)).toBeTruthy()
     expect(screen.getByText('Rendering on your Mac')).toBeTruthy()
   })
