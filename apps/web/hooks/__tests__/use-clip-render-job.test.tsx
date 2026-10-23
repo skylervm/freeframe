@@ -58,7 +58,7 @@ describe('clip render job requests', () => {
   })
 
   it('cancels the latest job', async () => {
-    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', status: 'queued', clips_rendered: null, message: null } }
+    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', ranges: [], status: 'queued', clips_rendered: null, message: null } }
     const { result } = hook()
     await waitFor(() => expect(result.current.data?.job?.id).toBe('job'))
     await act(() => result.current.cancel())
@@ -105,7 +105,7 @@ describe('clip render job requests', () => {
   })
 
   it.each(['queued', 'claimed'] as const)('polls a %s job every ten seconds and stops after completion and unmount', async (status) => {
-    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', status, clips_rendered: null, message: null } }
+    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', ranges: [], status, clips_rendered: null, message: null } }
     vi.useFakeTimers()
     const { result, unmount } = hook()
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
@@ -126,7 +126,7 @@ describe('clip render job requests', () => {
   })
 
   it('stops polling when an active control unmounts', async () => {
-    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', status: 'queued', clips_rendered: null, message: null } }
+    latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', ranges: [], status: 'queued', clips_rendered: null, message: null } }
     vi.useFakeTimers()
     const { unmount } = hook()
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
@@ -137,7 +137,7 @@ describe('clip render job requests', () => {
   })
 
   it.each([null, 'done', 'failed', 'cancelled'] as const)('does not poll while idle or %s', async (status) => {
-    if (status) latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', status, clips_rendered: 2, message: null } }
+    if (status) latest = { ...latest, job: { id: 'job', asset_id: 'asset', version_id: 'version', ranges: [], status, clips_rendered: 2, message: null } }
     vi.useFakeTimers()
     hook()
     await act(async () => { await vi.advanceTimersByTimeAsync(1) })
