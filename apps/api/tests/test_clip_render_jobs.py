@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -253,7 +254,8 @@ def test_invalid_locked_ranges_are_conflicts_before_hashing(queue, start, end):
     response = queue.create()
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "invalid_range"
-    assert response.json()["detail"]["message"].startswith("A locked range must have finite timecodes")
+    assert "must have finite timecodes" in response.json()["detail"]["message"]
+    assert response.json()["detail"]["comment_id"] == str(queue.comments[0].id)
     assert queue.jobs == []
     queue.db.commit.assert_not_called()
 
@@ -288,6 +290,25 @@ def test_locked_ranges_with_the_same_text_are_not_a_conflict(queue):
     assert queue.create().status_code == 201
     assert [(item["comment_id"], item["number"]) for item in queue.jobs[0].ranges] == [
         (str(second.id), 1), (str(first.id), 2)]
+
+
+def test_more_locked_ranges_than_the_runner_can_number_are_a_conflict(queue):
+    many = [SimpleNamespace(id=uuid.uuid4(), locked_at=NOW, timecode_start=float(n), timecode_end=float(n) + 1)
+            for n in range(1000)]
+    assert len(locked_snapshot(many[:999])[0]) == 999
+    with pytest.raises(HTTPException) as caught:
+        locked_snapshot(many)
+    assert caught.value.status_code == 409
+    assert caught.value.detail["code"] == "too_many_ranges"
+
+
+def test_a_new_earlier_range_renumbers_the_clips_and_allows_another_render(queue):
+    job(queue, status="done")
+    earlier = queue.comment(9, timecode_start=1.0, timecode_end=2.0)
+    assert queue.create().status_code == 201
+    numbers = {item["comment_id"]: item["number"] for item in queue.jobs[-1].ranges}
+    assert numbers[str(earlier.id)] == 1
+    assert numbers[str(queue.comments[0].id)] == 2
 
 
 def test_ranges_that_start_together_get_a_stable_order(queue):

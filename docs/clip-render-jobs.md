@@ -11,7 +11,10 @@ selected ready video version. The comment text does not matter. Only locked
 ranges are included, numbered 1 upward by start time (then end, then comment
 id). Later comment edits do not change that snapshot. Every locked range must
 have finite timecodes, a nonnegative start, and an end after its start. An
-invalid range returns a conflict.
+invalid range returns a conflict that names the comment. At most 999 ranges can
+be locked for one render (`too_many_ranges`). The automation clip-marker list
+(`GET .../comments` under the project token) still lists only `Clip N` comments;
+this rule applies to rendering.
 An active job prevents duplicates. The newest successful job also prevents
 rendering an identical locked snapshot again. Failed or cancelled jobs can be
 retried. Changing which ranges are locked, or editing a range and relocking it,

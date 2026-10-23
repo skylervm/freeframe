@@ -24,6 +24,8 @@ _CLIP_INSTRUCTION = re.compile(
 )
 
 CLIP_RENDER_LEASE = timedelta(minutes=90)
+# Matches ClipRenderRange.number (le=999), which the runner queue validates.
+MAX_CLIPS_PER_JOB = 999
 
 
 def claimable_jobs(now: datetime):
@@ -56,9 +58,16 @@ def locked_snapshot(comments: list[Comment]) -> tuple[list[dict], str]:
         if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
             raise HTTPException(status_code=409, detail={
                 "code": "invalid_range",
-                "message": "A locked range must have finite timecodes with start >= 0 and end > start",
+                "message": f"The locked range at {comment.timecode_start}s must have finite timecodes "
+                           "with start >= 0 and end > start",
+                "comment_id": str(comment.id),
             })
         locked.append((start, end, str(comment.id)))
+    if len(locked) > MAX_CLIPS_PER_JOB:
+        raise HTTPException(status_code=409, detail={
+            "code": "too_many_ranges",
+            "message": f"At most {MAX_CLIPS_PER_JOB} ranges can be locked for one render",
+        })
     locked.sort()
     ranges = [{"comment_id": comment_id, "number": number, "start": start, "end": end}
               for number, (start, end, comment_id) in enumerate(locked, start=1)]
