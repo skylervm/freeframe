@@ -43,40 +43,25 @@ def range_comments(db: Session, asset_id, version_id) -> list[Comment]:
         Comment.timecode_start.is_not(None),
         Comment.timecode_end.is_not(None),
     ).all()
-    return [comment for comment in comments if clip_number(comment.body) is not None]
-
-
-def clip_number(body: str) -> int | None:
-    if not _CLIP_INSTRUCTION.match(body or ""):
-        return None
-    digits = re.match(r"^\s*clip\s+(\d+)", body, re.IGNORECASE).group(1).lstrip("0") or "0"
-    if len(digits) > 3:
-        return None
-    number = int(digits)
-    return number if 1 <= number <= 999 else None
+    return comments
 
 
 def locked_snapshot(comments: list[Comment]) -> tuple[list[dict], str]:
-    ranges = []
+    """Locked ranges in start order, numbered 1..N. The comment text never sets the number."""
+    locked = []
     for comment in comments:
         if comment.locked_at is None:
             continue
-        number = clip_number(comment.body)
         start, end = float(comment.timecode_start), float(comment.timecode_end)
         if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
             raise HTTPException(status_code=409, detail={
                 "code": "invalid_range",
-                "message": f"Clip {number} must have finite timecodes with start >= 0 and end > start",
+                "message": "A locked range must have finite timecodes with start >= 0 and end > start",
             })
-        ranges.append({"comment_id": str(comment.id), "number": number, "start": start, "end": end})
-    numbers = [item["number"] for item in ranges]
-    for number in sorted(set(numbers)):
-        if numbers.count(number) > 1:
-            raise HTTPException(status_code=409, detail={
-                "code": "duplicate_clip_number",
-                "message": f"Clip {number} is used by more than one locked range",
-            })
-    ranges.sort(key=lambda item: (item["number"], item["comment_id"]))
+        locked.append((start, end, str(comment.id)))
+    locked.sort()
+    ranges = [{"comment_id": comment_id, "number": number, "start": start, "end": end}
+              for number, (start, end, comment_id) in enumerate(locked, start=1)]
     canonical = json.dumps(ranges, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return ranges, hashlib.sha256(canonical.encode()).hexdigest()
 
