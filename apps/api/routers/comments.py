@@ -369,6 +369,9 @@ def create_comment(
         body=body.body,
         visibility=body.visibility or "public",
     )
+    # The authenticated commenter is the author, so the existing author lock rule applies.
+    if body.locked:
+        comment.locked_at = datetime.now(timezone.utc)
     db.add(comment)
     db.flush()
 
@@ -413,6 +416,8 @@ def reply_to_comment(
 ):
     asset = _get_asset(db, asset_id)
     require_comment_access(db, asset, current_user)
+    if body.locked:
+        raise HTTPException(status_code=400, detail="Only a range comment can be locked")
     parent = db.query(Comment).filter(
         Comment.id == comment_id, Comment.asset_id == asset_id, Comment.deleted_at.is_(None),
     ).first()

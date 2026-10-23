@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from apps.api.routers import comments as comments_module
-from apps.api.schemas.comment import CommentUpdate
+from apps.api.schemas.comment import CommentCreate, CommentUpdate
+from apps.api.services import permissions
 
 APPROVED = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -173,3 +174,103 @@ def test_locked_must_be_sent_on_its_own(payload):
 
 def test_locked_alone_is_a_valid_update():
     assert CommentUpdate(locked=False).locked is False
+
+
+def _create(monkeypatch, *, can_comment=True):
+    db = MagicMock()
+    asset = MagicMock(id=uuid.uuid4(), project_id=uuid.uuid4(), created_by=None)
+    user = MagicMock(id=uuid.uuid4())
+    monkeypatch.setattr(comments_module, "_get_asset", lambda *_a: asset)
+    monkeypatch.setattr(permissions, "can_comment_asset", lambda *_a: can_comment)
+    monkeypatch.setattr(comments_module, "_create_mentions", lambda *_a: None)
+    monkeypatch.setattr(comments_module, "_build_comment_response", lambda comment, *_a, **_k: comment)
+
+    def call(**kwargs):
+        body = CommentCreate(version_id=uuid.uuid4(), body="Clip", **kwargs)
+        return comments_module.create_comment(asset.id, body, db, user)
+
+    return call, db, user
+
+
+def test_create_range_already_locked_in_one_commit(monkeypatch):
+    call, db, user = _create(monkeypatch)
+
+    comment = call(timecode_start=0, timecode_end=5, locked=True)
+
+    assert comment.author_id == user.id
+    assert comment.body == "Clip"
+    assert (comment.timecode_start, comment.timecode_end) == (0, 5)
+    assert isinstance(comment.locked_at, datetime)
+    assert comment.locked_at.tzinfo == timezone.utc
+    db.commit.assert_called_once()
+    db.refresh.assert_called_once_with(comment)
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"timecode_start": 0, "timecode_end": 5}])
+def test_default_create_stays_unlocked(monkeypatch, kwargs):
+    call, db, _ = _create(monkeypatch)
+
+    comment = call(**kwargs)
+
+    assert comment.locked_at is None
+    db.commit.assert_called_once()
+
+
+def test_create_locked_range_requires_comment_access(monkeypatch):
+    call, db, _ = _create(monkeypatch, can_comment=False)
+
+    with pytest.raises(HTTPException) as error:
+        call(timecode_start=0, timecode_end=5, locked=True)
+
+    assert error.value.status_code == 403
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("kwargs", [
+    {},
+    {"timecode_start": 0},
+    {"timecode_end": 5},
+    {"timecode_start": 0, "timecode_end": 5, "parent_id": uuid.uuid4()},
+    {"timecode_start": -1, "timecode_end": 5},
+    {"timecode_start": 5, "timecode_end": 5},
+    {"timecode_start": 5, "timecode_end": 4},
+    {"timecode_start": float("nan"), "timecode_end": 5},
+    {"timecode_start": 0, "timecode_end": float("inf")},
+])
+def test_create_locked_requires_a_valid_top_level_range(monkeypatch, kwargs):
+    call, db, _ = _create(monkeypatch)
+
+    with pytest.raises(ValidationError):
+        call(locked=True, **kwargs)
+
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_reply_endpoint_rejects_locked_even_with_range_fields(monkeypatch):
+    _, db, user = _create(monkeypatch)
+    body = CommentCreate(version_id=uuid.uuid4(), body="Clip", timecode_start=0, timecode_end=5, locked=True)
+
+    with pytest.raises(HTTPException) as error:
+        comments_module.reply_to_comment(uuid.uuid4(), uuid.uuid4(), body, db, user)
+
+    assert error.value.status_code == 400
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_create_lock_is_set_before_persisting(monkeypatch):
+    call, db, _ = _create(monkeypatch)
+
+    def fail_commit():
+        comment = db.add.call_args_list[0].args[0]
+        assert isinstance(comment.locked_at, datetime)
+        raise RuntimeError("Commit failed")
+
+    db.commit.side_effect = fail_commit
+
+    with pytest.raises(RuntimeError, match="Commit failed"):
+        call(timecode_start=0, timecode_end=5, locked=True)
+
+    db.refresh.assert_not_called()

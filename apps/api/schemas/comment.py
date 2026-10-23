@@ -15,9 +15,21 @@ class CommentCreate(BaseModel):
     timecode_start: Optional[float] = None
     timecode_end: Optional[float] = None
     body: str
+    locked: bool = False
     visibility: Optional[str] = "public"  # "public" or "internal"
     annotation: Optional[AnnotationData] = None
     mention_user_ids: list[uuid.UUID] = []  # Explicit mention IDs from frontend
+
+    @model_validator(mode="after")
+    def validate_locked_range(self):
+        if self.locked:
+            if self.parent_id is not None or self.timecode_start is None or self.timecode_end is None:
+                raise ValueError("Only a range comment can be locked")
+            if not (math.isfinite(self.timecode_start) and math.isfinite(self.timecode_end)):
+                raise ValueError("timecodes must be finite numbers")
+            if self.timecode_start < 0 or self.timecode_end <= self.timecode_start:
+                raise ValueError("timecode_end must be after timecode_start, and both at least 0")
+        return self
 
 class GuestCommentCreate(BaseModel):
     asset_id: Optional[uuid.UUID] = None  # Required for folder/project shares
