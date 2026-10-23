@@ -536,6 +536,7 @@ def test_worker_claim_and_finish_hide_out_of_scope_jobs(queue, change):
     assert queue.client.get("/runner/clip-render-jobs").json() == []
     assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").status_code == 404
     assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/finish", json={"claim_id": str(row.claim_id), "status": "done", "clips_rendered": 2, "message": "ok"}).status_code == 404
+    assert queue.client.post(f"/runner/clip-render-jobs/{row.id}/progress", json={"claim_id": str(row.claim_id), "clips_rendered": 1}).status_code == 404
     assert queue.updates == []
 
 
@@ -690,6 +691,111 @@ def test_failed_count_cannot_exceed_the_snapshot_and_failure_allows_retry(queue,
     assert row.status == ("failed" if count <= 2 else "claimed")
     if count <= 2:
         assert queue.create().status_code == 201
+
+
+def progress(queue, row, count, claim_id=None):
+    return queue.client.post(f"/runner/clip-render-jobs/{row.id}/progress", json={
+        "claim_id": str(claim_id or row.claim_id), "clips_rendered": count,
+    })
+
+
+def test_progress_only_counts_up_and_a_lower_report_is_a_harmless_no_op(queue):
+    row = job(queue, status="claimed")
+    assert row.clips_rendered is None
+    for reported, stored in [(0, 0), (1, 1), (2, 2), (1, 2), (2, 2)]:
+        response = progress(queue, row, reported)
+        assert response.status_code == 200
+        assert response.json() == {"id": str(row.id), "clips_rendered": stored}
+        assert row.clips_rendered == stored
+    assert row.status == "claimed" and row.finished_at is None
+
+
+@pytest.mark.parametrize("count", [3, 999])
+def test_progress_cannot_exceed_the_snapshot_clip_count(queue, count):
+    row = job(queue, status="claimed")
+    response = progress(queue, row, count)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_clip_count"
+    assert row.clips_rendered is None and queue.updates == []
+    queue.db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("count", [-1, 1000, 1.5, "1", True, None])
+def test_progress_count_must_be_a_strict_integer_in_range(queue, count):
+    row = job(queue, status="claimed")
+    assert progress(queue, row, count).status_code == 422
+    assert row.clips_rendered is None and queue.updates == []
+
+
+def test_progress_requires_the_current_claim(queue):
+    row = job(queue, status="claimed")
+    assert progress(queue, row, 1, claim_id=uuid.uuid4()).status_code == 409
+    assert row.clips_rendered is None and queue.updates == []
+
+
+@pytest.mark.parametrize("status", ["queued", "done", "failed", "cancelled"])
+def test_progress_is_refused_unless_the_job_is_claimed(queue, status):
+    row = job(queue, status=status, clips_rendered=1)
+    assert progress(queue, row, 2, claim_id=row.claim_id or uuid.uuid4()).status_code == 409
+    assert row.clips_rendered == 1 and queue.updates == []
+
+
+def test_progress_after_a_reclaim_from_the_old_runner_cannot_move_the_new_count(queue):
+    row = job(queue)
+    first = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
+    assert progress(queue, row, 2, claim_id=first["claim_id"]).status_code == 200
+    row.claimed_at = datetime.now(timezone.utc) - timedelta(minutes=91)
+    second = queue.client.post(f"/runner/clip-render-jobs/{row.id}/claim").json()
+    assert row.clips_rendered is None
+    assert progress(queue, row, 2, claim_id=first["claim_id"]).status_code == 409
+    assert row.clips_rendered is None
+    assert progress(queue, row, 1, claim_id=second["claim_id"]).status_code == 200
+    assert row.clips_rendered == 1
+
+
+def test_progress_conditional_update_rechecks_claim_id_after_lookup(queue):
+    row = job(queue, status="claimed")
+    claim_id = row.claim_id
+    query = queue.db.query.side_effect
+    count = 0
+
+    def concurrent_claim(model):
+        nonlocal count
+        if model is ClipRenderJob:
+            count += 1
+            if count == 2:
+                row.claim_id = uuid.uuid4()
+        return query(model)
+
+    queue.db.query.side_effect = concurrent_claim
+    assert progress(queue, row, 1, claim_id=claim_id).status_code == 409
+    assert row.clips_rendered is None
+
+
+def test_progress_conditional_update_cannot_touch_a_job_that_finished_after_lookup(queue):
+    row = job(queue, status="claimed")
+    query = queue.db.query.side_effect
+    count = 0
+
+    def concurrent_finish(model):
+        nonlocal count
+        if model is ClipRenderJob:
+            count += 1
+            if count == 2:
+                row.status = "done"
+        return query(model)
+
+    queue.db.query.side_effect = concurrent_finish
+    assert progress(queue, row, 1).status_code == 409
+    assert row.clips_rendered is None
+
+
+def test_latest_job_exposes_progress_and_clip_total_to_the_browser(queue):
+    row = job(queue, status="claimed")
+    assert progress(queue, row, 1).status_code == 200
+    latest = queue.latest().json()["job"]
+    assert latest["clips_rendered"] == 1 and len(latest["ranges"]) == 2
+    assert "claim_id" not in latest
 
 
 def test_incomplete_done_can_be_reported_as_failed_and_retried(queue):

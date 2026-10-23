@@ -35,6 +35,7 @@ GENERIC_401 = {"detail": "Invalid clip runner token"}
 RUNNER_PATHS = {
     ("GET", "/runner/clip-render-jobs"),
     ("POST", "/runner/clip-render-jobs/{job_id}/claim"),
+    ("POST", "/runner/clip-render-jobs/{job_id}/progress"),
     ("POST", "/runner/clip-render-jobs/{job_id}/finish"),
 }
 
@@ -219,7 +220,7 @@ def test_every_failure_does_the_same_database_and_hash_work_as_success(monkeypat
     assert (queried, compares) == ([ClipRunnerToken, User, ClipRunnerToken], 1)
 
 
-# ── The runner token reaches only the three runner endpoints ───────────────────
+# ── The runner token reaches only the four runner endpoints ───────────────────
 
 def _dependency_calls(dependant):
     for dependency in dependant.dependencies:
@@ -236,7 +237,7 @@ def _api_routes(routes):
             yield from _api_routes(route.original_router.routes)
 
 
-def test_only_the_three_runner_routes_accept_a_runner_token_and_they_accept_nothing_else():
+def test_only_the_four_runner_routes_accept_a_runner_token_and_they_accept_nothing_else():
     session_auth = {get_current_user, get_optional_user, get_automation_actor}
     runner_routes = set()
     routes = list(_api_routes(app.routes))

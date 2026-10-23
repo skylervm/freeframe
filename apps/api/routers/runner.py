@@ -6,8 +6,14 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..middleware.clip_runner_auth import ClipRunnerActor, get_clip_runner_actor
-from ..schemas.clip_render_job import ClipRenderJobFinish, WorkerClipRenderClaim, WorkerClipRenderJob, WorkerClipRenderResult
-from ..services.clip_render_jobs import claim_runner_job, finish_runner_job, list_runner_jobs
+from ..schemas.clip_render_job import (
+    ClipRenderJobFinish,
+    ClipRenderJobProgress,
+    WorkerClipRenderClaim,
+    WorkerClipRenderJob,
+    WorkerClipRenderResult,
+)
+from ..services.clip_render_jobs import claim_runner_job, finish_runner_job, list_runner_jobs, report_runner_progress
 
 router = APIRouter(prefix="/runner", tags=["runner"])
 
@@ -27,6 +33,16 @@ def claim_clip_render_job(
     actor: ClipRunnerActor = Depends(get_clip_runner_actor),
 ):
     return claim_runner_job(db, job_id, actor.user)
+
+
+@router.post("/clip-render-jobs/{job_id}/progress", response_model=WorkerClipRenderResult)
+def report_clip_render_progress(
+    job_id: uuid.UUID,
+    body: ClipRenderJobProgress,
+    db: Session = Depends(get_db),
+    actor: ClipRunnerActor = Depends(get_clip_runner_actor),
+):
+    return report_runner_progress(db, job_id, body, actor.user)
 
 
 @router.post("/clip-render-jobs/{job_id}/finish", response_model=WorkerClipRenderResult)
