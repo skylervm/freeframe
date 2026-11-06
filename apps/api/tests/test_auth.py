@@ -113,6 +113,21 @@ def test_send_magic_code_existing_user_sends_code(client, mock_db):
     mock_send.assert_called_once()
 
 
+def test_send_magic_code_goes_to_stored_address_not_typed_case(client, mock_db):
+    """A differently-cased typed address must not redirect the code: it goes to the stored address."""
+    user = _mock_user("bob@example.com")
+    mock_db.first.return_value = user
+
+    with patch("apps.api.middleware.rate_limit.check_rate_limit", return_value=(True, 0)), \
+         patch("apps.api.routers.auth.store_magic_code") as mock_store, \
+         patch("apps.api.routers.auth.send_task_safe") as mock_send:
+        resp = client.post("/auth/send-magic-code", json={"email": "Bob@example.com"})
+
+    assert resp.status_code == 200
+    assert mock_store.call_args.args[0] == "bob@example.com"
+    assert mock_send.call_args.args[1] == "bob@example.com"
+
+
 def test_register_endpoint_removed(client):
     """POST /auth/register — endpoint has been removed (was an unauthenticated, un-invite-gated
     account creation path; GHSA-9m78-fww2-p89h). 404, not 405: the route no longer exists."""
@@ -330,3 +345,21 @@ def test_delete_user_rejects_self(client, auth_headers, test_user):
     test_user.is_superadmin = True
     resp = client.delete(f"/users/{test_user.id}", headers=auth_headers)
     assert resp.status_code == 400
+
+
+def test_get_user_by_email_ignores_case():
+    """A capitalised address must find the same account as the lowercase one."""
+    from sqlalchemy.dialects import postgresql
+
+    from apps.api.services.auth_service import get_user_by_email
+
+    db = MagicMock()
+    get_user_by_email(db, "Skyler@FromBelow.studio")
+
+    conditions = db.query.return_value.filter.call_args.args
+    sql = str(
+        conditions[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "lower(users.email) = 'skyler@frombelow.studio'" in sql
