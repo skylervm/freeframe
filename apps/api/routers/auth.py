@@ -66,11 +66,13 @@ def send_magic_code(body: SendMagicCodeRequest, db: Session = Depends(get_db)):
 
     # Generate and store magic code in Redis
     code = generate_magic_code()
-    store_magic_code(body.email, code)
+    store_magic_code(user.email, code)
 
-    # Queue email via Celery (async)
+    # Queue email via Celery (async). Send to the stored address, never the typed
+    # one: the lookup ignores case, and a differently-cased typed address must not
+    # redirect the code to another mailbox.
     try:
-        send_task_safe(send_magic_code_email, body.email, code, MAGIC_CODE_EXPIRY_MINUTES)
+        send_task_safe(send_magic_code_email, user.email, code, MAGIC_CODE_EXPIRY_MINUTES)
     except Exception:
         pass  # Email delivery is best-effort; code is already in Redis
 
