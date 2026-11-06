@@ -3,6 +3,7 @@ from typing import Optional
 import uuid
 from jose import JWTError, jwt
 import bcrypt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..config import settings
 from ..models.user import User
@@ -50,7 +51,14 @@ def decode_token(token: str) -> Optional[dict]:
         return None
 
 def get_user_by_email(db: Session, email: str) -> Optional[User]:
-    return db.query(User).filter(User.email == email, User.deleted_at.is_(None)).first()
+    # Match ignoring case: the login form sends the address as typed, and a
+    # phone's auto-capital ("Skyler@...") used to find no account and send no
+    # code.
+    return (
+        db.query(User)
+        .filter(func.lower(User.email) == email.lower(), User.deleted_at.is_(None))
+        .first()
+    )
 
 def get_user_by_id(db: Session, user_id: uuid.UUID) -> Optional[User]:
     return db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()

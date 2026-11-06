@@ -330,3 +330,21 @@ def test_delete_user_rejects_self(client, auth_headers, test_user):
     test_user.is_superadmin = True
     resp = client.delete(f"/users/{test_user.id}", headers=auth_headers)
     assert resp.status_code == 400
+
+
+def test_get_user_by_email_ignores_case():
+    """A capitalised address must find the same account as the lowercase one."""
+    from sqlalchemy.dialects import postgresql
+
+    from apps.api.services.auth_service import get_user_by_email
+
+    db = MagicMock()
+    get_user_by_email(db, "Skyler@FromBelow.studio")
+
+    conditions = db.query.return_value.filter.call_args.args
+    sql = str(
+        conditions[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "lower(users.email) = 'skyler@frombelow.studio'" in sql
